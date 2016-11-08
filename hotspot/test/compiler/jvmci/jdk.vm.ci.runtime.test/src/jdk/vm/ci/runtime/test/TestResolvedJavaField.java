@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,38 +23,32 @@
 
 /**
  * @test
- * @requires (os.simpleArch == "x64" | os.simpleArch == "sparcv9" | os.simpleArch == "aarch64")
+ * @requires (vm.simpleArch == "x64" | vm.simpleArch == "sparcv9" | vm.simpleArch == "aarch64")
  * @library ../../../../../
  * @modules jdk.vm.ci/jdk.vm.ci.meta
  *          jdk.vm.ci/jdk.vm.ci.runtime
  *          java.base/jdk.internal.misc
- * @build jdk.vm.ci.runtime.test.TestResolvedJavaField
  * @run junit/othervm -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI jdk.vm.ci.runtime.test.TestResolvedJavaField
  */
 
 package jdk.vm.ci.runtime.test;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import jdk.vm.ci.meta.ResolvedJavaField;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
+import org.junit.Test;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import jdk.vm.ci.meta.JavaConstant;
-import jdk.vm.ci.meta.LocationIdentity;
-import jdk.vm.ci.meta.ResolvedJavaField;
-import jdk.vm.ci.meta.ResolvedJavaMethod;
-
-import org.junit.Test;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Tests for {@link ResolvedJavaField}.
@@ -99,43 +93,6 @@ public class TestResolvedJavaField extends FieldUniverse {
                     Annotation actual = e.getValue().getAnnotation(expected.annotationType());
                     assertEquals(expected, actual);
                 }
-            }
-        }
-    }
-
-    @Test
-    public void getLocationIdentityTest() {
-        for (Map.Entry<Field, ResolvedJavaField> e : fields.entrySet()) {
-            LocationIdentity identity = e.getValue().getLocationIdentity();
-            assertTrue(identity != null);
-        }
-    }
-
-    static class ReadConstantValueTestConstants {
-        String stringField = "field";
-        final String constantStringField = "constantField";
-
-        static final Object CONST1 = new ReadConstantValueTestConstants();
-        static final Object CONST2 = null;
-        static final Object CONST3 = new String();
-    }
-
-    @Test
-    public void readConstantValueTest() throws NoSuchFieldException {
-        ResolvedJavaField field = metaAccess.lookupJavaField(ReadConstantValueTestConstants.class.getDeclaredField("stringField"));
-        List<ConstantValue> receiverConstants = readConstants(ReadConstantValueTestConstants.class);
-        for (ConstantValue receiver : receiverConstants) {
-            JavaConstant value = constantReflection.readConstantFieldValue(field, receiver.value);
-            assertNull(value);
-        }
-
-        ResolvedJavaField constField = metaAccess.lookupJavaField(ReadConstantValueTestConstants.class.getDeclaredField("constantStringField"));
-        for (ConstantValue receiver : receiverConstants) {
-            JavaConstant value = constantReflection.readConstantFieldValue(constField, receiver.value);
-            if (value != null) {
-                Object expected = "constantField";
-                String actual = ((ReadConstantValueTestConstants) receiver.boxed).constantStringField;
-                assertTrue(actual + " != " + expected, actual == expected);
             }
         }
     }

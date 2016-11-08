@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,198 +23,128 @@
 
 package jdk.test.lib.jittester;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-import jdk.test.lib.jittester.IRNode;
-import jdk.test.lib.jittester.ProductionParams;
-import jdk.test.lib.jittester.SymbolTable;
-import jdk.test.lib.jittester.TypeList;
+import jdk.test.lib.util.Pair;
 import jdk.test.lib.jittester.factories.IRNodeBuilder;
-import jdk.test.lib.jittester.TypesParser;
 import jdk.test.lib.jittester.types.TypeKlass;
-import jdk.test.lib.jittester.visitors.JavaCodeVisitor;
+import jdk.test.lib.jittester.utils.FixedTrees;
 import jdk.test.lib.jittester.utils.OptionResolver;
 import jdk.test.lib.jittester.utils.OptionResolver.Option;
 import jdk.test.lib.jittester.utils.PseudoRandom;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 public class Automatic {
-    public static final int minutesToWait = 3;
+    public static final int MINUTES_TO_WAIT = Integer.getInteger("jdk.test.lib.jittester", 3);
 
-    private static String makeTestCase(String name) {
+    private static Pair<IRNode, IRNode> generateIRTree(String name) {
         SymbolTable.removeAll();
         TypeList.removeAll();
-        StringBuilder resultVis = new StringBuilder();
-        StringBuilder headerBuilder = new StringBuilder();
-        try {
-            IRNodeBuilder builder = new IRNodeBuilder()
-                    .setPrefix(name)
-                    .setName(name)
-                    .setLevel(0);
 
-            JavaCodeVisitor vis = new JavaCodeVisitor();
-            String synopsis = "seed = '" + ProductionParams.seed.value() + "'";
-            String pathPrefix = ProductionParams.testbaseDir.value()
-                    .replaceAll("([^/]+)", "..");
-            headerBuilder
-                    .append("/*\n")
-                    .append(" * @test\n")
-                    .append(" * @summary ")
-                        .append(synopsis)
-                        .append("\n")
-                    .append(" * @compile ")
-                        .append(name)
-                        .append(".java\n")
-                    .append(" * @run build jdk.test.lib.jittester.jtreg.JitTesterDriver\n")
-                    .append(" * @run driver jdk.test.lib.jittester.jtreg.JitTesterDriver ")
-                        .append(name)
-                        .append("\n")
-                    .append(" */\n\n");
+        IRNodeBuilder builder = new IRNodeBuilder()
+                .setPrefix(name)
+                .setName(name)
+                .setLevel(0);
 
-
-            if (!ProductionParams.disableClasses.value()) {
-                long comlexityLimit = (long) (ProductionParams.complexityLimit.value()
-                        * PseudoRandom.random());
-                IRNode privateClasses = builder.setComplexityLimit(comlexityLimit)
+        Long complexityLimit = ProductionParams.complexityLimit.value();
+        IRNode privateClasses = null;
+        if (!ProductionParams.disableClasses.value()) {
+            long privateClassComlexity = (long) (complexityLimit * PseudoRandom.random());
+            try {
+                privateClasses = builder.setComplexityLimit(privateClassComlexity)
                         .getClassDefinitionBlockFactory()
                         .produce();
-                if (privateClasses != null) {
-                    resultVis.append(privateClasses.accept(vis));
-                }
+            } catch (ProductionFailedException ex) {
+                ex.printStackTrace(System.out);
             }
-            long mainComplexityLimit = (long) (ProductionParams.complexityLimit.value()
-                    * PseudoRandom.random());
-            IRNode mainClass = builder.setComplexityLimit(mainComplexityLimit)
+        }
+        long mainClassComplexity = (long) (complexityLimit * PseudoRandom.random());
+        IRNode mainClass = null;
+        try {
+            mainClass = builder.setComplexityLimit(mainClassComplexity)
                     .getMainKlassFactory()
                     .produce();
-            resultVis.append(mainClass.accept(vis));
-
-            if (ProductionParams.printHierarchy.value()) {
-                headerBuilder
-                        .append("/*\n")
-                        .append(Automatic.printHierarchy())
-                        .append("*/\n");
-            }
-        } catch (Exception e) {
-            e.printStackTrace(System.out);
+            TypeKlass aClass = new TypeKlass(name);
+            mainClass.getChild(1).addChild(FixedTrees.generateMainOrExecuteMethod(aClass, true));
+            mainClass.getChild(1).addChild(FixedTrees.generateMainOrExecuteMethod(aClass, false));
+        } catch (ProductionFailedException ex) {
+            ex.printStackTrace(System.out);
         }
-        return headerBuilder.append(resultVis).toString();
+        return new Pair<>(mainClass, privateClasses);
     }
 
     private static void initializeTestGenerator(String[] params) {
         OptionResolver parser = new OptionResolver();
-        Option<String> propertyFileOpt = parser.addStringOption('p', "property-file", "",
-                "File to read properties from");
+        Option<String> propertyFileOpt = parser.addStringOption('p', "property-file",
+                "conf/default.properties", "File to read properties from");
         ProductionParams.register(parser);
         parser.parse(params, propertyFileOpt);
-        jdk.test.lib.jittester.utils.PseudoRandom.reset(ProductionParams.seed.value());
-        TypesParser.parseTypesAndMethods(ProductionParams.classesFile.value(), ProductionParams.excludeMethodsFile.value());
+        PseudoRandom.reset(ProductionParams.seed.value());
+        TypesParser.parseTypesAndMethods(ProductionParams.classesFile.value(),
+                ProductionParams.excludeMethodsFile.value());
+        if (ProductionParams.specificSeed.isSet()) {
+            PseudoRandom.setCurrentSeed(ProductionParams.specificSeed.value());
+        }
+    }
+
+    private static List<TestsGenerator> getTestGenerators() {
+        List<TestsGenerator> result = new ArrayList<>();
+        Class<?> factoryClass;
+        Function<String[], List<TestsGenerator>> factory;
+        String[] factoryClassNames = ProductionParams.generatorsFactories.value().split(",");
+        String[] generatorNames = ProductionParams.generators.value().split(",");
+        for (String factoryClassName : factoryClassNames) {
+            try {
+                factoryClass = Class.forName(factoryClassName);
+                factory = (Function<String[], List<TestsGenerator>>) factoryClass.newInstance();
+            } catch (ReflectiveOperationException roe) {
+                throw new Error("Can't instantiate generators factory", roe);
+            }
+            result.addAll(factory.apply(generatorNames));
+        }
+        return result;
     }
 
     public static void main(String[] args) {
         initializeTestGenerator(args);
         int counter = 0;
-        try {
-            String testbaseDir = ProductionParams.testbaseDir.value();
-            do {
-                double start = System.currentTimeMillis();
-                String name = "Test_" + counter;
-                generateTestFile(name);
-                double generationTime = System.currentTimeMillis() - start;
-                String path = getJavaPath();
-                ProcessBuilder pb = new ProcessBuilder(path + "javac", testbaseDir + "/" + name + ".java");
-                runProcess(pb, testbaseDir + "/" + name);
-
-                start = System.currentTimeMillis();
-                pb = new ProcessBuilder(path + "java", "-Xint", "-cp", testbaseDir, name);
-                name = name + ".gold";
-                runProcess(pb, testbaseDir + "/" + name);
+        System.out.printf(" %13s | %8s | %8s | %8s |%n", "start time", "count", "generat",
+                "running");
+        System.out.printf(" %13s | %8s | %8s | %8s |%n", "---", "---", "---", "---");
+        List<TestsGenerator> generators = getTestGenerators();
+        do {
+            double start = System.currentTimeMillis();
+            System.out.print("[" + LocalTime.now() + "] |");
+            String name = "Test_" + counter;
+            Pair<IRNode, IRNode> irTree = generateIRTree(name);
+            System.out.printf(" %8d |", counter);
+            long maxWaitTime = TimeUnit.MINUTES.toMillis(MINUTES_TO_WAIT);
+            double generationTime = System.currentTimeMillis() - start;
+            System.out.printf(" %8.0f |", generationTime);
+            start = System.currentTimeMillis();
+            Thread generatorThread = new Thread(() -> {
+                for (TestsGenerator generator : generators) {
+                        generator.accept(irTree.first, irTree.second);
+                }
+            });
+            generatorThread.start();
+            try {
+                generatorThread.join(maxWaitTime);
+            } catch (InterruptedException ie) {
+                throw new Error("Test generation interrupted: " + ie, ie);
+            }
+            if (generatorThread.isAlive()) {
+                // maxTime reached, so, proceed to next test generation
+                generatorThread.interrupt();
+            } else {
                 double runningTime = System.currentTimeMillis() - start;
-                System.out.printf("%4d : generation time (ms) : %8.0f running time (ms) : %8.0f\n",
-                                  counter, generationTime, runningTime);
-                if (runningTime < TimeUnit.MINUTES.toMillis(minutesToWait))
-                ++counter;
-            } while (counter < ProductionParams.numberOfTests.value());
-        } catch (IOException | InterruptedException ex) {
-            Logger.getLogger(Automatic.class.getName()).log(Level.SEVERE, null, ex);
-        }
-    }
-
-    private static String getJavaPath() {
-        String[] env = { "JDK_HOME", "JAVA_HOME", "BOOTDIR" };
-        for (String name : env) {
-            String path = System.getenv(name);
-            if (path != null) {
-                return path + "/bin/";
+                System.out.printf(" %8.0f |%n", runningTime);
+                if (runningTime < maxWaitTime) {
+                    ++counter;
+                }
             }
-        }
-        return "";
-    }
-
-    private static void runProcess(ProcessBuilder pb, String name)
-            throws IOException, InterruptedException {
-        pb.redirectError(new File(name + ".err"));
-        pb.redirectOutput(new File(name + ".out"));
-        Process process = pb.start();
-        if (process.waitFor(minutesToWait, TimeUnit.MINUTES)) {
-            try (FileWriter file = new FileWriter(name + ".exit")) {
-                file.write(Integer.toString(process.exitValue()));
-            }
-        } else {
-            process.destroyForcibly();
-        }
-        TimeUnit.MILLISECONDS.sleep(300);
-    }
-
-    private static void generateTestFile(String testName) {
-        String code = makeTestCase(testName);
-        String testbaseDir = ProductionParams.testbaseDir.value();
-        String fileName = testbaseDir + "/" + testName + ".java";
-        try (FileWriter file = new FileWriter(fileName)) {
-            file.write(code);
-            //file.close();
-        } catch (IOException ex) {
-            Logger.getLogger(Automatic.class.getName())
-                  .log(Level.SEVERE, " Cannot write to file " + fileName, ex);
-        }
-    }
-
-    private static String printHierarchy() {
-        String r = "CLASS HIERARCHY:\n";
-        for (Type t : TypeList.getAll()) {
-            if (t instanceof TypeKlass) {
-                TypeKlass k = (TypeKlass) t;
-                if (k.isAbstract()) {
-                    r += "abstract ";
-                }
-                if (k.isFinal()) {
-                    r += "final ";
-                }
-                if (k.isInterface()) {
-                    r += "interface ";
-                } else {
-                    r += "class ";
-                }
-                r += k.getName() + ": ";
-                HashSet<String> parents = k.getParentsNames();
-                if (parents != null) {
-                    Iterator<String> n = parents.iterator();
-                    int size = parents.size();
-                    for (int i = 0; n.hasNext() && i < size - 1; i++) {
-                        r += n.next() + ", ";
-                    }
-                    if (n.hasNext()) {
-                        r += n.next();
-                    }
-                }
-                r += "\n";
-            }
-        }
-        return r;
+        } while (counter < ProductionParams.numberOfTests.value());
     }
 }

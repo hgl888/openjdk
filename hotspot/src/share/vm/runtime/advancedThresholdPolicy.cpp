@@ -27,6 +27,9 @@
 #include "compiler/compileTask.hpp"
 #include "runtime/advancedThresholdPolicy.hpp"
 #include "runtime/simpleThresholdPolicy.inline.hpp"
+#if INCLUDE_JVMCI
+#include "jvmci/jvmciRuntime.hpp"
+#endif
 
 #ifdef TIERED
 // Print an event.
@@ -52,7 +55,8 @@ void AdvancedThresholdPolicy::initialize() {
     // Simple log n seems to grow too slowly for tiered, try something faster: log n * log log n
     int log_cpu = log2_intptr(os::active_processor_count());
     int loglog_cpu = log2_intptr(MAX2(log_cpu, 1));
-    count = MAX2(log_cpu * loglog_cpu, 1) * 3 / 2;
+    count = MAX2(log_cpu * loglog_cpu * 3 / 2, 2);
+    FLAG_SET_ERGO(intx, CICompilerCount, count);
   }
 #else
   // On 32-bit systems, the number of compiler threads is limited to 3.
@@ -64,12 +68,18 @@ void AdvancedThresholdPolicy::initialize() {
   /// available to the VM and thus cause the VM to crash.
   if (FLAG_IS_DEFAULT(CICompilerCount)) {
     count = 3;
+    FLAG_SET_ERGO(intx, CICompilerCount, count);
   }
 #endif
 
-  set_c1_count(MAX2(count / 3, 1));
-  set_c2_count(MAX2(count - c1_count(), 1));
-  FLAG_SET_ERGO(intx, CICompilerCount, c1_count() + c2_count());
+  if (TieredStopAtLevel < CompLevel_full_optimization) {
+    // No C2 compiler thread required
+    set_c1_count(count);
+  } else {
+    set_c1_count(MAX2(count / 3, 1));
+    set_c2_count(MAX2(count - c1_count(), 1));
+  }
+  assert(count == c1_count() + c2_count(), "inconsistent compiler thread count");
 
   // Some inlining tuning
 #ifdef X86
@@ -453,7 +463,7 @@ CompLevel AdvancedThresholdPolicy::common(Predicate p, Method* method, CompLevel
 }
 
 // Determine if a method should be compiled with a normal entry point at a different level.
-CompLevel AdvancedThresholdPolicy::call_event(Method* method, CompLevel cur_level) {
+CompLevel AdvancedThresholdPolicy::call_event(Method* method, CompLevel cur_level, JavaThread * thread) {
   CompLevel osr_level = MIN2((CompLevel) method->highest_osr_comp_level(),
                              common(&AdvancedThresholdPolicy::loop_predicate, method, cur_level, true));
   CompLevel next_level = common(&AdvancedThresholdPolicy::call_predicate, method, cur_level);
@@ -470,11 +480,16 @@ CompLevel AdvancedThresholdPolicy::call_event(Method* method, CompLevel cur_leve
   } else {
     next_level = MAX2(osr_level, next_level);
   }
+#if INCLUDE_JVMCI
+  if (UseJVMCICompiler) {
+    next_level = JVMCIRuntime::adjust_comp_level(method, false, next_level, thread);
+  }
+#endif
   return next_level;
 }
 
 // Determine if we should do an OSR compilation of a given method.
-CompLevel AdvancedThresholdPolicy::loop_event(Method* method, CompLevel cur_level) {
+CompLevel AdvancedThresholdPolicy::loop_event(Method* method, CompLevel cur_level, JavaThread * thread) {
   CompLevel next_level = common(&AdvancedThresholdPolicy::loop_predicate, method, cur_level, true);
   if (cur_level == CompLevel_none) {
     // If there is a live OSR method that means that we deopted to the interpreter
@@ -484,6 +499,11 @@ CompLevel AdvancedThresholdPolicy::loop_event(Method* method, CompLevel cur_leve
       return osr_level;
     }
   }
+#if INCLUDE_JVMCI
+  if (UseJVMCICompiler) {
+    next_level = JVMCIRuntime::adjust_comp_level(method, true, next_level, thread);
+  }
+#endif
   return next_level;
 }
 
@@ -501,7 +521,7 @@ void AdvancedThresholdPolicy::method_invocation_event(const methodHandle& mh, co
     create_mdo(mh, thread);
   }
   if (is_compilation_enabled() && !CompileBroker::compilation_is_in_queue(mh)) {
-    CompLevel next_level = call_event(mh(), level);
+    CompLevel next_level = call_event(mh(), level, thread);
     if (next_level != level) {
       compile(mh, InvocationEntryBci, next_level, thread);
     }
@@ -521,7 +541,7 @@ void AdvancedThresholdPolicy::method_back_branch_event(const methodHandle& mh, c
   }
 
   if (is_compilation_enabled()) {
-    CompLevel next_osr_level = loop_event(imh(), level);
+    CompLevel next_osr_level = loop_event(imh(), level, thread);
     CompLevel max_osr_level = (CompLevel)imh->highest_osr_comp_level();
     // At the very least compile the OSR version
     if (!CompileBroker::compilation_is_in_queue(imh) && (next_osr_level != level)) {
@@ -534,7 +554,7 @@ void AdvancedThresholdPolicy::method_back_branch_event(const methodHandle& mh, c
     if (mh() != imh()) { // If there is an enclosing method
       guarantee(nm != NULL, "Should have nmethod here");
       cur_level = comp_level(mh());
-      next_level = call_event(mh(), cur_level);
+      next_level = call_event(mh(), cur_level, thread);
 
       if (max_osr_level == CompLevel_full_optimization) {
         // The inlinee OSRed to full opt, we need to modify the enclosing method to avoid deopts
@@ -569,7 +589,7 @@ void AdvancedThresholdPolicy::method_back_branch_event(const methodHandle& mh, c
       }
     } else {
       cur_level = comp_level(imh());
-      next_level = call_event(imh(), cur_level);
+      next_level = call_event(imh(), cur_level, thread);
       if (!CompileBroker::compilation_is_in_queue(imh) && (next_level != cur_level)) {
         compile(imh, InvocationEntryBci, next_level, thread);
       }

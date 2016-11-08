@@ -77,7 +77,7 @@ public class ProvidesTest extends ModuleTestBase {
         Files.createDirectories(modules);
 
         new JavacTask(tb)
-                .options("-modulesourcepath", src.toString())
+                .options("--module-source-path", src.toString())
                 .outdir(modules)
                 .files(findJavaFiles(src))
                 .run(Task.Expect.SUCCESS)
@@ -143,8 +143,7 @@ public class ProvidesTest extends ModuleTestBase {
         List<String> expected = Arrays.asList(
                 "C.java:1:36: compiler.err.cant.resolve.location: kindname.class, Missing, , , (compiler.misc.location: kindname.package, p, null)",
                 "module-info.java:1:22: compiler.err.cant.resolve.location: kindname.class, Missing, , , (compiler.misc.location: kindname.package, p, null)",
-                "module-info.java:1:37: compiler.err.service.implementation.doesnt.have.a.no.args.constructor: <any>",
-                "3 errors");
+                "2 errors");
         if (!output.containsAll(expected)) {
             throw new Exception("Expected output not found");
         }
@@ -161,7 +160,7 @@ public class ProvidesTest extends ModuleTestBase {
 
         List<String> output = new JavacTask(tb)
                 .options("-XDrawDiagnostics",
-                        "-modulesourcepath", modules.toString())
+                        "--module-source-path", modules.toString())
                 .outdir(Files.createDirectories(base.resolve("classes")))
                 .files(findJavaFiles(modules))
                 .run(Task.Expect.FAIL)
@@ -192,8 +191,11 @@ public class ProvidesTest extends ModuleTestBase {
                 .writeAll()
                 .getOutputLines(Task.OutputKind.DIRECT);
 
-        List<String> expected = Arrays.asList("module-info.java:1:31: compiler.err.prob.found.req: (compiler.misc.inconvertible.types: p.B, p.A)",
-                "1 error");
+        List<String> expected = Arrays.asList(
+                "module-info.java:1:31: compiler.err.service.implementation.must.be.subtype.of.service.interface",
+                "module-info.java:1:12: compiler.warn.service.provided.but.not.exported.or.used: p.A",
+                "1 error",
+                "1 warning");
         if (!output.containsAll(expected)) {
             throw new Exception("Expected output not found");
         }

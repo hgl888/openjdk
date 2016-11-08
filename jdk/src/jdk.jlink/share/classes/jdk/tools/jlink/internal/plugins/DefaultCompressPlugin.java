@@ -24,26 +24,22 @@
  */
 package jdk.tools.jlink.internal.plugins;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 
-import jdk.tools.jlink.internal.ModulePoolImpl;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.plugin.TransformerPlugin;
+import jdk.tools.jlink.internal.ResourcePoolManager.ResourcePoolImpl;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.ResourcePoolBuilder;
+import jdk.tools.jlink.plugin.Plugin;
 import jdk.tools.jlink.internal.ImagePluginStack;
+import jdk.tools.jlink.internal.ResourcePoolManager;
 import jdk.tools.jlink.internal.ResourcePrevisitor;
 import jdk.tools.jlink.internal.StringTable;
-import jdk.tools.jlink.internal.Utils;
 
 /**
  *
  * ZIP and String Sharing compression plugin
  */
-public final class DefaultCompressPlugin implements TransformerPlugin, ResourcePrevisitor {
+public final class DefaultCompressPlugin implements Plugin, ResourcePrevisitor {
     public static final String NAME = "compress";
     public static final String FILTER = "filter";
     public static final String LEVEL_0 = "0";
@@ -59,31 +55,30 @@ public final class DefaultCompressPlugin implements TransformerPlugin, ResourceP
     }
 
     @Override
-    public void visit(ModulePool in, ModulePool out) {
+    public ResourcePool transform(ResourcePool in, ResourcePoolBuilder out) {
         if (ss != null && zip != null) {
-            ModulePool output = new ImagePluginStack.OrderedResourcePool(in.getByteOrder(),
-                    ((ModulePoolImpl) in).getStringTable());
-            ss.visit(in, output);
-            zip.visit(output, out);
+            ResourcePoolManager resMgr = new ImagePluginStack.OrderedResourcePoolManager(
+                    in.byteOrder(), ((ResourcePoolImpl)in).getStringTable());
+            return zip.transform(ss.transform(in, resMgr.resourcePoolBuilder()), out);
         } else if (ss != null) {
-            ss.visit(in, out);
+            return ss.transform(in, out);
         } else if (zip != null) {
-            zip.visit(in, out);
+            return zip.transform(in, out);
         }
+
+        return out.build();
     }
 
     @Override
-    public void previsit(ModulePool resources, StringTable strings) {
+    public void previsit(ResourcePool resources, StringTable strings) {
         if (ss != null) {
             ss.previsit(resources, strings);
         }
     }
 
     @Override
-    public Set<Category> getType() {
-        Set<Category> set = new HashSet<>();
-        set.add(Category.COMPRESSOR);
-        return Collections.unmodifiableSet(set);
+    public Category getType() {
+        return Category.COMPRESSOR;
     }
 
     @Override
@@ -103,33 +98,26 @@ public final class DefaultCompressPlugin implements TransformerPlugin, ResourceP
 
     @Override
     public void configure(Map<String, String> config) {
-        try {
-            String filter = config.get(FILTER);
-            String[] patterns = filter == null ? null
-                    : Utils.listParser.apply(filter);
-            ResourceFilter resFilter = new ResourceFilter(patterns);
-            String level = config.get(NAME);
-            if (level != null) {
-                switch (level) {
-                    case LEVEL_0:
-                        ss = new StringSharingPlugin(resFilter);
-                        break;
-                    case LEVEL_1:
-                        zip = new ZipPlugin(resFilter);
-                        break;
-                    case LEVEL_2:
-                        ss = new StringSharingPlugin(resFilter);
-                        zip = new ZipPlugin(resFilter);
-                        break;
-                    default:
-                        throw new IllegalArgumentException("Invalid compression level " + level);
-                }
-            } else {
-                ss = new StringSharingPlugin(resFilter);
-                zip = new ZipPlugin(resFilter);
+        ResourceFilter resFilter = ResourceFilter.includeFilter(config.get(FILTER));
+        String level = config.get(NAME);
+        if (level != null) {
+            switch (level) {
+                case LEVEL_0:
+                    ss = new StringSharingPlugin(resFilter);
+                    break;
+                case LEVEL_1:
+                    zip = new ZipPlugin(resFilter);
+                    break;
+                case LEVEL_2:
+                    ss = new StringSharingPlugin(resFilter);
+                    zip = new ZipPlugin(resFilter);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Invalid compression level " + level);
             }
-        } catch (IOException ex) {
-            throw new UncheckedIOException(ex);
+        } else {
+            ss = new StringSharingPlugin(resFilter);
+            zip = new ZipPlugin(resFilter);
         }
     }
 }

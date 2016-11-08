@@ -24,23 +24,18 @@
  */
 package jdk.tools.jlink.internal.plugins;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Predicate;
-import jdk.tools.jlink.plugin.TransformerPlugin;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.plugin.ModuleEntry;
-import jdk.tools.jlink.internal.Utils;
+import jdk.tools.jlink.plugin.Plugin;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.ResourcePoolBuilder;
+import jdk.tools.jlink.plugin.ResourcePoolEntry;
 
 /**
  *
  * Exclude files plugin
  */
-public final class ExcludeFilesPlugin implements TransformerPlugin {
+public final class ExcludeFilesPlugin implements Plugin {
 
     public static final String NAME = "exclude-files";
     private Predicate<String> predicate;
@@ -51,20 +46,19 @@ public final class ExcludeFilesPlugin implements TransformerPlugin {
     }
 
     @Override
-    public void visit(ModulePool in, ModulePool out) {
+    public ResourcePool transform(ResourcePool in, ResourcePoolBuilder out) {
         in.transformAndCopy((file) -> {
-            if (!file.getType().equals(ModuleEntry.Type.CLASS_OR_RESOURCE)) {
-                file = predicate.test(file.getPath()) ? file : null;
+            if (!file.type().equals(ResourcePoolEntry.Type.CLASS_OR_RESOURCE)) {
+                file = predicate.test(file.path()) ? file : null;
             }
             return file;
         }, out);
+        return out.build();
     }
 
     @Override
-    public Set<Category> getType() {
-        Set<Category> set = new HashSet<>();
-        set.add(Category.FILTER);
-        return Collections.unmodifiableSet(set);
+    public Category getType() {
+        return Category.FILTER;
     }
 
     @Override
@@ -84,11 +78,6 @@ public final class ExcludeFilesPlugin implements TransformerPlugin {
 
     @Override
     public void configure(Map<String, String> config) {
-        try {
-            String value = config.get(NAME);
-            predicate = new ResourceFilter(Utils.listParser.apply(value), true);
-        } catch (IOException ex) {
-            throw new UncheckedIOException(ex);
-        }
+        predicate = ResourceFilter.excludeFilter(config.get(NAME));
     }
 }

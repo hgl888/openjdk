@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2008, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,23 +22,24 @@
  */
 
 /* @test
- * @bug 4313887 6838333 6925932 7006126 8037945 8072495
+ * @bug 4313887 6838333 6925932 7006126 8037945 8072495 8140449
  * @summary Unit test for java.nio.file.Path path operations
  */
 
-import java.nio.file.*;
+import java.nio.file.FileSystems;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 public class PathOps {
 
     static final java.io.PrintStream out = System.out;
 
-    private String input;
     private Path path;
     private Exception exc;
 
     private PathOps(String first, String... more) {
         out.println();
-        input = first;
         try {
             path = FileSystems.getDefault().getPath(first, more);
             out.format("%s -> %s", first, path);
@@ -84,6 +85,14 @@ public class PathOps {
         out.println("check root");
         checkPath();
         check(path.getRoot(), expected);
+        return this;
+    }
+
+    PathOps hasRoot() {
+        out.println("check has root");
+        checkPath();
+        if (path.getRoot() == null)
+            fail();
         return this;
     }
 
@@ -147,6 +156,11 @@ public class PathOps {
         return this;
     }
 
+    PathOps makeAbsolute() {
+        this.path = path.toAbsolutePath();
+        return this;
+    }
+
     PathOps absolute() {
         out.println("check path is absolute");
         checkPath();
@@ -183,6 +197,19 @@ public class PathOps {
         return this;
     }
 
+    PathOps relativizeFail(String other) {
+        out.format("test relativize %s\n", other);
+        checkPath();
+        Path that = FileSystems.getDefault().getPath(other);
+        try {
+            Path result = path.relativize(that);
+            out.format("\tExpected: IllegalArgumentException");
+            out.format("\tActual: %s\n",  result);
+            fail();
+        } catch (IllegalArgumentException expected) { }
+        return this;
+    }
+
     PathOps normalize(String expected) {
         out.println("check normalized path");
         checkPath();
@@ -209,6 +236,11 @@ public class PathOps {
         return new PathOps(first, more);
     }
 
+    static PathOps test(Path path) {
+        return new PathOps(path.toString());
+    }
+
+
     // -- PathOpss --
 
     static void header(String s) {
@@ -219,6 +251,7 @@ public class PathOps {
 
     static void doWindowsTests() {
         header("Windows specific tests");
+        Path cwd = Paths.get("").toAbsolutePath();
 
         // construction
         test("C:\\")
@@ -417,6 +450,52 @@ public class PathOps {
         test("C:\\abc").absolute();
         test("\\\\server\\share\\").absolute();
         test("").notAbsolute();
+        test(cwd).absolute();
+
+        // toAbsolutePath
+        test("")
+            .makeAbsolute()
+            .absolute()
+            .hasRoot()
+            .string(cwd.toString());
+        test(".")
+            .makeAbsolute()
+            .absolute()
+            .hasRoot()
+            .string(cwd.toString() + "\\.");
+        test("foo")
+            .makeAbsolute()
+            .absolute()
+            .hasRoot()
+            .string(cwd.toString() + "\\foo");
+
+        String rootAsString = cwd.getRoot().toString();
+        if (rootAsString.length() == 3
+                && rootAsString.charAt(1) == ':'
+                && rootAsString.charAt(2) == '\\') {
+            Path root = Paths.get(rootAsString.substring(0, 2));
+
+            // C:
+            test(root)
+                .makeAbsolute()
+                .absolute()
+                .hasRoot()
+                .string(cwd.toString());
+
+            // C:.
+            test(root + ".")
+                .makeAbsolute()
+                .absolute()
+                .hasRoot()
+                .string(cwd.toString() + "\\.");
+
+            // C:foo
+            test(root + "foo")
+                .makeAbsolute()
+                .absolute()
+                .hasRoot()
+                .string(cwd.toString() + "\\foo");
+        }
 
         // resolve
         test("C:\\")
@@ -506,19 +585,709 @@ public class PathOps {
             .resolveSibling("C:\\", "C:\\");
 
         // relativize
-        test("foo\\bar")
-            .relativize("foo\\bar", "")
-            .relativize("foo", "..");
+        test("C:\\a")
+            .relativize("C:\\a", "")
+            .relativize("C:\\", "..")
+            .relativize("C:\\.", "..")
+            .relativize("C:\\..", "..")
+            .relativize("C:\\..\\..", "..")
+            .relativize("C:\\a\\b", "b")
+            .relativize("C:\\a\\b\\c", "b\\c")
+            .relativize("C:\\a\\.", "")        // "." also valid
+            .relativize("C:\\a\\..", "..")
+            .relativize("C:\\x", "..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:\\a\\b")
+            .relativize("C:\\a\\b", "")
+            .relativize("C:\\a", "..")
+            .relativize("C:\\", "..\\..")
+            .relativize("C:\\.", "..\\..")
+            .relativize("C:\\..", "..\\..")
+            .relativize("C:\\..\\..", "..\\..")
+            .relativize("C:\\a\\b\\c", "c")
+            .relativize("C:\\a\\.", "..")
+            .relativize("C:\\a\\..", "..\\..")
+            .relativize("C:\\x", "..\\..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
         test("C:\\a\\b\\c")
+            .relativize("C:\\a\\b\\c", "")
+            .relativize("C:\\a\\b", "..")
             .relativize("C:\\a", "..\\..")
-            .relativize("C:\\a\\b\\c", "");
-        test("\\\\server\\share\\foo")
-            .relativize("\\\\server\\share\\bar", "..\\bar")
-            .relativize("\\\\server\\share\\foo", "");
+            .relativize("C:\\", "..\\..\\..")
+            .relativize("C:\\.", "..\\..\\..")
+            .relativize("C:\\..", "..\\..\\..")
+            .relativize("C:\\..\\..", "..\\..\\..")
+            .relativize("C:\\..\\..\\..", "..\\..\\..")
+            .relativize("C:\\..\\..\\..\\..", "..\\..\\..")
+            .relativize("C:\\a\\b\\c\\d", "d")
+            .relativize("C:\\a\\b\\c\\d\\e", "d\\e")
+            .relativize("C:\\a\\b\\c\\.", "")        // "." also valid
+            .relativize("C:\\a\\b\\c\\..", "..")
+            .relativize("C:\\a\\x", "..\\..\\x")
+            .relativize("C:\\x", "..\\..\\..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:\\..\\a")
+            .relativize("C:\\a", "")
+            .relativize("C:\\", "..")
+            .relativize("C:\\.", "..")
+            .relativize("C:\\..", "..")
+            .relativize("C:\\..\\..", "..")
+            .relativize("C:\\a\\b", "b")
+            .relativize("C:\\a\\b\\c", "b\\c")
+            .relativize("C:\\a\\.", "")        // "." also valid
+            .relativize("C:\\a\\..", "..")
+            .relativize("C:\\x", "..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:\\..\\a\\b")
+            .relativize("C:\\a\\b", "")
+            .relativize("C:\\a", "..")
+            .relativize("C:\\", "..\\..")
+            .relativize("C:\\.", "..\\..")
+            .relativize("C:\\..", "..\\..")
+            .relativize("C:\\..\\..", "..\\..")
+            .relativize("C:\\..\\..\\..", "..\\..")
+            .relativize("C:\\..\\..\\..\\..", "..\\..")
+            .relativize("C:\\a\\b\\c", "c")
+            .relativize("C:\\a\\b\\.", "")        // "." also valid
+            .relativize("C:\\a\\b\\..", "..")
+            .relativize("C:\\a\\x", "..\\x")
+            .relativize("C:\\x", "..\\..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:\\..\\..\\a\\b")
+            .relativize("C:\\a\\b", "")
+            .relativize("C:\\a", "..")
+            .relativize("C:\\", "..\\..")
+            .relativize("C:\\.", "..\\..")
+            .relativize("C:\\..", "..\\..")
+            .relativize("C:\\..\\..", "..\\..")
+            .relativize("C:\\..\\..\\..", "..\\..")
+            .relativize("C:\\..\\..\\..\\..", "..\\..")
+            .relativize("C:\\a\\b\\c", "c")
+            .relativize("C:\\a\\b\\.", "")        // "." also valid
+            .relativize("C:\\a\\b\\..", "..")
+            .relativize("C:\\a\\x", "..\\x")
+            .relativize("C:\\x", "..\\..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:\\..\\a\\b\\c")
+            .relativize("C:\\a\\b\\c", "")
+            .relativize("C:\\a\\b", "..")
+            .relativize("C:\\a", "..\\..")
+            .relativize("C:\\", "..\\..\\..")
+            .relativize("C:\\.", "..\\..\\..")
+            .relativize("C:\\..", "..\\..\\..")
+            .relativize("C:\\..\\..", "..\\..\\..")
+            .relativize("C:\\..\\..\\..", "..\\..\\..")
+            .relativize("C:\\..\\..\\..\\..", "..\\..\\..")
+            .relativize("C:\\a\\b\\c\\d", "d")
+            .relativize("C:\\a\\b\\c\\d\\e", "d\\e")
+            .relativize("C:\\a\\b\\c\\.", "")        // "." also valid
+            .relativize("C:\\a\\b\\c\\..", "..")
+            .relativize("C:\\a\\x", "..\\..\\x")
+            .relativize("C:\\x", "..\\..\\..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:\\..\\..\\a\\b\\c")
+            .relativize("C:\\a\\b\\c", "")
+            .relativize("C:\\a\\b", "..")
+            .relativize("C:\\a", "..\\..")
+            .relativize("C:\\", "..\\..\\..")
+            .relativize("C:\\.", "..\\..\\..")
+            .relativize("C:\\..", "..\\..\\..")
+            .relativize("C:\\..\\..", "..\\..\\..")
+            .relativize("C:\\..\\..\\..", "..\\..\\..")
+            .relativize("C:\\..\\..\\..\\..", "..\\..\\..")
+            .relativize("C:\\a\\b\\c\\d", "d")
+            .relativize("C:\\a\\b\\c\\d\\e", "d\\e")
+            .relativize("C:\\a\\b\\c\\.", "")        // "." also valid
+            .relativize("C:\\a\\b\\c\\..", "..")
+            .relativize("C:\\a\\x", "..\\..\\x")
+            .relativize("C:\\x", "..\\..\\..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:\\..\\..\\..\\a\\b\\c")
+            .relativize("C:\\a\\b\\c", "")
+            .relativize("C:\\a\\b", "..")
+            .relativize("C:\\a", "..\\..")
+            .relativize("C:\\", "..\\..\\..")
+            .relativize("C:\\.", "..\\..\\..")
+            .relativize("C:\\..", "..\\..\\..")
+            .relativize("C:\\..\\..", "..\\..\\..")
+            .relativize("C:\\..\\..\\..", "..\\..\\..")
+            .relativize("C:\\..\\..\\..\\..", "..\\..\\..")
+            .relativize("C:\\a\\b\\c\\d", "d")
+            .relativize("C:\\a\\b\\c\\d\\e", "d\\e")
+            .relativize("C:\\a\\b\\c\\.", "")        // "." also valid
+            .relativize("C:\\a\\b\\c\\..", "..")
+            .relativize("C:\\a\\x", "..\\..\\x")
+            .relativize("C:\\x", "..\\..\\..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:\\.\\a")
+            .relativize("C:\\a", "")
+            .relativize("C:\\", "..")
+            .relativize("C:\\.", "..")
+            .relativize("C:\\..", "..")
+            .relativize("C:\\..\\..", "..")
+            .relativize("C:\\a\\b", "b")
+            .relativize("C:\\a\\b\\c", "b\\c")
+            .relativize("C:\\a\\.", "")        // "." also valid
+            .relativize("C:\\a\\..", "..")
+            .relativize("C:\\x", "..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:\\..\\a")
+            .relativize("C:\\a", "")
+            .relativize("C:\\", "..")
+            .relativize("C:\\.", "..")
+            .relativize("C:\\..", "..")
+            .relativize("C:\\..\\..", "..")
+            .relativize("C:\\a\\b", "b")
+            .relativize("C:\\a\\b\\c", "b\\c")
+            .relativize("C:\\a\\.", "")        // "." also valid
+            .relativize("C:\\a\\..", "..")
+            .relativize("C:\\x", "..\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:\\a\\..")
+            .relativize("C:\\a", "a")
+            .relativize("C:\\", "")          // "." is also valid
+            .relativize("C:\\.", "")
+            .relativize("C:\\..", "")
+            .relativize("C:\\..\\..", "")
+            .relativize("C:\\a\\.", "a")
+            .relativize("C:\\a\\..", "")
+            .relativize("C:\\x", "x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("C:a")
+            .relativize("C:a", "")
+            .relativize("C:", "..")
+            .relativize("C:.", "..")
+            .relativize("C:..", "..\\..")
+            .relativize("C:..\\..", "..\\..\\..")
+            .relativize("C:.\\..", "..\\..")
+            .relativize("C:a\\b", "b")
+            .relativize("C:a\\b\\c", "b\\c")
+            .relativize("C:..\\x", "..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x");
+        test("C:a\\b")
+            .relativize("C:a\\b", "")
+            .relativize("C:a", "..")
+            .relativize("C:", "..\\..")
+            .relativize("C:.", "..\\..")
+            .relativize("C:..", "..\\..\\..")
+            .relativize("C:..\\..", "..\\..\\..\\..")
+            .relativize("C:.\\..", "..\\..\\..")
+            .relativize("C:a\\b\\c", "c")
+            .relativize("C:..\\x", "..\\..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x");
+        test("C:a\\b\\c")
+            .relativize("C:a\\b\\c", "")
+            .relativize("C:a\\b", "..")
+            .relativize("C:a", "..\\..")
+            .relativize("C:", "..\\..\\..")
+            .relativize("C:.", "..\\..\\..")
+            .relativize("C:..", "..\\..\\..\\..")
+            .relativize("C:..\\..", "..\\..\\..\\..\\..")
+            .relativize("C:.\\..", "..\\..\\..\\..")
+            .relativize("C:a\\b\\c\\d", "d")
+            .relativize("C:a\\b\\c\\d\\e", "d\\e")
+            .relativize("C:a\\x", "..\\..\\x")
+            .relativize("C:..\\x", "..\\..\\..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x");
+        test("C:")
+            .relativize("C:a", "a")
+            .relativize("C:a\\b\\c", "a\\b\\c")
+            .relativize("C:", "")
+            .relativize("C:.", "")              // "" also valid
+            .relativize("C:..", "..")
+            .relativize("C:..\\..", "..\\..")
+            .relativize("C:.\\..", "..")
+            .relativizeFail("C:\\x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x");
+        test("C:..")
+            .relativize("C:..\\a", "a")
+            .relativize("C:..", "")
+            .relativize("C:.\\..", "")
+            .relativizeFail("C:\\x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("x");
+        test("C:..\\a")
+            .relativize("C:..\\a\\b", "b")
+            .relativize("C:..\\a", "")
+            .relativize("C:..", "..")
+            .relativize("C:.\\..", "..")
+            .relativizeFail("C:\\x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("x");
+        test("C:..\\a\\b")
+            .relativize("C:..\\a\\b\\c", "c")
+            .relativize("C:..\\a\\b", "")
+            .relativize("C:..\\a", "..")
+            .relativize("C:..", "..\\..")
+            .relativize("C:.\\..", "..\\..")
+            .relativizeFail("C:\\x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x")
+            .relativizeFail("")
+            .relativizeFail("x");
+        test("C:a\\..")
+            .relativize("C:b", "b")
+            .relativize("C:", "")
+            .relativize("C:.", "")       // "." also valid
+            .relativize("C:..", "..")
+            .relativize("C:a\\..\\b", "b")
+            .relativize("C:a\\..", "")
+            .relativize("C:..\\b", "..\\b")
+            .relativize("C:b\\..", "")
+            .relativizeFail("C:\\x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x")
+            .relativizeFail("x");
+        test("C:a\\..\\b")
+            .relativize("C:a\\..\\b", "")
+            .relativize("C:a\\..", "..")
+            .relativize("C:", "..")
+            .relativize("C:.", "..")
+            .relativize("C:..", "..\\..")
+            .relativize("C:b", "")
+            .relativize("C:c", "..\\c")
+            .relativize("C:..\\c", "..\\..\\c")
+            .relativize("C:a\\..\\b\\c", "c")
+            .relativizeFail("C:\\x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x")
+            .relativizeFail("x");
+        test("\\a")
+            .relativize("\\a", "")
+            .relativize("\\", "..")
+            .relativize("\\.", "..")
+            .relativize("\\..", "..")
+            .relativize("\\..\\..", "..")
+            .relativize("\\a\\b", "b")
+            .relativize("\\a\\b\\c", "b\\c")
+            .relativize("\\a\\.", "")        // "." also valid
+            .relativize("\\a\\..", "..")
+            .relativize("\\x", "..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\a\\b")
+            .relativize("\\a\\b", "")
+            .relativize("\\a", "..")
+            .relativize("\\", "..\\..")
+            .relativize("\\.", "..\\..")
+            .relativize("\\..", "..\\..")
+            .relativize("\\..\\..", "..\\..")
+            .relativize("\\a\\b\\c", "c")
+            .relativize("\\a\\.", "..")
+            .relativize("\\a\\..", "..\\..")
+            .relativize("\\x", "..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\a\\b\\c")
+            .relativize("\\a\\b\\c", "")
+            .relativize("\\a\\b", "..")
+            .relativize("\\a", "..\\..")
+            .relativize("\\", "..\\..\\..")
+            .relativize("\\.", "..\\..\\..")
+            .relativize("\\..", "..\\..\\..")
+            .relativize("\\..\\..", "..\\..\\..")
+            .relativize("\\..\\..\\..", "..\\..\\..")
+            .relativize("\\..\\..\\..\\..", "..\\..\\..")
+            .relativize("\\a\\b\\c\\d", "d")
+            .relativize("\\a\\b\\c\\d\\e", "d\\e")
+            .relativize("\\a\\b\\c\\.", "")        // "." also valid
+            .relativize("\\a\\b\\c\\..", "..")
+            .relativize("\\a\\x", "..\\..\\x")
+            .relativize("\\x", "..\\..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\..\\a")
+            .relativize("\\a", "")
+            .relativize("\\", "..")
+            .relativize("\\.", "..")
+            .relativize("\\..", "..")
+            .relativize("\\..\\..", "..")
+            .relativize("\\a\\b", "b")
+            .relativize("\\a\\b\\c", "b\\c")
+            .relativize("\\a\\.", "")        // "." also valid
+            .relativize("\\a\\..", "..")
+            .relativize("\\x", "..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\..\\a\\b")
+            .relativize("\\a\\b", "")
+            .relativize("\\a", "..")
+            .relativize("\\", "..\\..")
+            .relativize("\\.", "..\\..")
+            .relativize("\\..", "..\\..")
+            .relativize("\\..\\..", "..\\..")
+            .relativize("\\..\\..\\..", "..\\..")
+            .relativize("\\..\\..\\..\\..", "..\\..")
+            .relativize("\\a\\b\\c", "c")
+            .relativize("\\a\\b\\.", "")        // "." also valid
+            .relativize("\\a\\b\\..", "..")
+            .relativize("\\a\\x", "..\\x")
+            .relativize("\\x", "..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\..\\..\\a\\b")
+            .relativize("\\a\\b", "")
+            .relativize("\\a", "..")
+            .relativize("\\", "..\\..")
+            .relativize("\\.", "..\\..")
+            .relativize("\\..", "..\\..")
+            .relativize("\\..\\..", "..\\..")
+            .relativize("\\..\\..\\..", "..\\..")
+            .relativize("\\..\\..\\..\\..", "..\\..")
+            .relativize("\\a\\b\\c", "c")
+            .relativize("\\a\\b\\.", "")        // "." also valid
+            .relativize("\\a\\b\\..", "..")
+            .relativize("\\a\\x", "..\\x")
+            .relativize("\\x", "..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\..\\a\\b\\c")
+            .relativize("\\a\\b\\c", "")
+            .relativize("\\a\\b", "..")
+            .relativize("\\a", "..\\..")
+            .relativize("\\", "..\\..\\..")
+            .relativize("\\.", "..\\..\\..")
+            .relativize("\\..", "..\\..\\..")
+            .relativize("\\..\\..", "..\\..\\..")
+            .relativize("\\..\\..\\..", "..\\..\\..")
+            .relativize("\\..\\..\\..\\..", "..\\..\\..")
+            .relativize("\\a\\b\\c\\d", "d")
+            .relativize("\\a\\b\\c\\d\\e", "d\\e")
+            .relativize("\\a\\b\\c\\.", "")        // "." also valid
+            .relativize("\\a\\b\\c\\..", "..")
+            .relativize("\\a\\x", "..\\..\\x")
+            .relativize("\\x", "..\\..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\..\\..\\a\\b\\c")
+            .relativize("\\a\\b\\c", "")
+            .relativize("\\a\\b", "..")
+            .relativize("\\a", "..\\..")
+            .relativize("\\", "..\\..\\..")
+            .relativize("\\.", "..\\..\\..")
+            .relativize("\\..", "..\\..\\..")
+            .relativize("\\..\\..", "..\\..\\..")
+            .relativize("\\..\\..\\..", "..\\..\\..")
+            .relativize("\\..\\..\\..\\..", "..\\..\\..")
+            .relativize("\\a\\b\\c\\d", "d")
+            .relativize("\\a\\b\\c\\d\\e", "d\\e")
+            .relativize("\\a\\b\\c\\.", "")        // "." also valid
+            .relativize("\\a\\b\\c\\..", "..")
+            .relativize("\\a\\x", "..\\..\\x")
+            .relativize("\\x", "..\\..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\..\\..\\..\\a\\b\\c")
+            .relativize("\\a\\b\\c", "")
+            .relativize("\\a\\b", "..")
+            .relativize("\\a", "..\\..")
+            .relativize("\\", "..\\..\\..")
+            .relativize("\\.", "..\\..\\..")
+            .relativize("\\..", "..\\..\\..")
+            .relativize("\\..\\..", "..\\..\\..")
+            .relativize("\\..\\..\\..", "..\\..\\..")
+            .relativize("\\..\\..\\..\\..", "..\\..\\..")
+            .relativize("\\a\\b\\c\\d", "d")
+            .relativize("\\a\\b\\c\\d\\e", "d\\e")
+            .relativize("\\a\\b\\c\\.", "")        // "." also valid
+            .relativize("\\a\\b\\c\\..", "..")
+            .relativize("\\a\\x", "..\\..\\x")
+            .relativize("\\x", "..\\..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\.\\a")
+            .relativize("\\a", "")
+            .relativize("\\", "..")
+            .relativize("\\.", "..")
+            .relativize("\\..", "..")
+            .relativize("\\..\\..", "..")
+            .relativize("\\a\\b", "b")
+            .relativize("\\a\\b\\c", "b\\c")
+            .relativize("\\a\\.", "")        // "." also valid
+            .relativize("\\a\\..", "..")
+            .relativize("\\x", "..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\..\\a")
+            .relativize("\\a", "")
+            .relativize("\\", "..")
+            .relativize("\\.", "..")
+            .relativize("\\..", "..")
+            .relativize("\\..\\..", "..")
+            .relativize("\\a\\b", "b")
+            .relativize("\\a\\b\\c", "b\\c")
+            .relativize("\\a\\.", "")        // "." also valid
+            .relativize("\\a\\..", "..")
+            .relativize("\\x", "..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\a\\..")
+            .relativize("\\a", "a")
+            .relativize("\\", "")          // "." is also valid
+            .relativize("\\.", "")
+            .relativize("\\..", "")
+            .relativize("\\..\\..", "")
+            .relativize("\\a\\.", "a")
+            .relativize("\\a\\..", "")
+            .relativize("\\x", "x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("\\")
+            .relativize("\\a", "a")
+            .relativize("\\", "")          // "." is also valid
+            .relativize("\\.", "")
+            .relativize("\\..", "")
+            .relativize("\\..\\..", "")
+            .relativize("\\a\\.", "a")
+            .relativize("\\a\\..", "")
+            .relativize("\\x", "x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("a")
+            .relativize("a", "")
+            .relativize("", "..")
+            .relativize(".", "..")
+            .relativize("..", "..\\..")
+            .relativize("..\\..", "..\\..\\..")
+            .relativize(".\\..", "..\\..")
+            .relativize("a\\b", "b")
+            .relativize("a\\b\\c", "b\\c")
+            .relativize("..\\x", "..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x");
+        test("a\\b")
+            .relativize("a\\b", "")
+            .relativize("a", "..")
+            .relativize("", "..\\..")
+            .relativize(".", "..\\..")
+            .relativize("..", "..\\..\\..")
+            .relativize("..\\..", "..\\..\\..\\..")
+            .relativize(".\\..", "..\\..\\..")
+            .relativize("a\\b\\c", "c")
+            .relativize("..\\x", "..\\..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x");
+        test("a\\b\\c")
+            .relativize("a\\b\\c", "")
+            .relativize("a\\b", "..")
+            .relativize("a", "..\\..")
+            .relativize("", "..\\..\\..")
+            .relativize(".", "..\\..\\..")
+            .relativize("..", "..\\..\\..\\..")
+            .relativize("..\\..", "..\\..\\..\\..\\..")
+            .relativize(".\\..", "..\\..\\..\\..")
+            .relativize("a\\b\\c\\d", "d")
+            .relativize("a\\b\\c\\d\\e", "d\\e")
+            .relativize("a\\x", "..\\..\\x")
+            .relativize("..\\x", "..\\..\\..\\..\\x")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x");
         test("")
-            .relativize("", "")
             .relativize("a", "a")
-            .relativize("a\\b\\c", "a\\b\\c");
+            .relativize("a\\b\\c", "a\\b\\c")
+            .relativize("", "")
+            .relativize(".", ".")
+            .relativize("..", "..")
+            .relativize("..\\..", "..\\..")
+            .relativize(".\\..", ".\\..")     // ".." also valid
+            .relativizeFail("\\")
+            .relativizeFail("\\x");
+        test("..")
+            .relativize("..\\a", "a")
+            .relativize("..", "")
+            .relativize(".\\..", "")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("x");
+        test("..\\a")
+            .relativize("..\\a\\b", "b")
+            .relativize("..\\a", "")
+            .relativize("..", "..")
+            .relativize(".\\..", "..")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("x");
+        test("..\\a\\b")
+            .relativize("..\\a\\b\\c", "c")
+            .relativize("..\\a\\b", "")
+            .relativize("..\\a", "..")
+            .relativize("..", "..\\..")
+            .relativize(".\\..", "..\\..")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x")
+            .relativizeFail("")
+            .relativizeFail("x");
+        test("a\\..")
+            .relativize("b", "b")
+            .relativize("", "")
+            .relativize(".", "")       // "." also valid
+            .relativize("..", "..")
+            .relativize("a\\..\\b", "b")
+            .relativize("a\\..", "")
+            .relativize("..\\b", "..\\b")
+            .relativize("b\\..", "")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x");
+        test("a\\..\\b")
+            .relativize("a\\..\\b", "")
+            .relativize("a\\..", "..")
+            .relativize("", "..")
+            .relativize(".", "..")
+            .relativize("..", "..\\..")
+            .relativize("b", "")
+            .relativize("c", "..\\c")
+            .relativize("..\\c", "..\\..\\c")
+            .relativize("a\\..\\b\\c", "c")
+            .relativizeFail("C:\\x")
+            .relativizeFail("C:x")
+            .relativizeFail("\\")
+            .relativizeFail("\\x");
 
         // normalize
         test("C:\\")
@@ -672,6 +1441,7 @@ public class PathOps {
 
     static void doUnixTests() {
         header("Unix specific tests");
+        Path cwd = Paths.get("").toAbsolutePath();
 
         // construction
         test("/")
@@ -840,7 +1610,22 @@ public class PathOps {
             .notAbsolute();
         test("")
             .notAbsolute();
+        test(cwd)
+            .absolute();
 
+        // toAbsolutePath
+        test("/")
+            .makeAbsolute()
+            .absolute();
+        test("/tmp")
+            .makeAbsolute()
+            .absolute();
+        test("tmp")
+            .makeAbsolute()
+            .absolute();
+        test("")
+            .makeAbsolute()
+            .absolute();
 
         // resolve
         test("/tmp")
@@ -879,20 +1664,324 @@ public class PathOps {
             .resolve("", "");
 
         // relativize
+        test("/a")
+            .relativize("/a", "")
+            .relativize("/", "..")
+            .relativize("/.", "..")
+            .relativize("/..", "..")
+            .relativize("/../..", "..")
+            .relativize("/a/b", "b")
+            .relativize("/a/b/c", "b/c")
+            .relativize("/a/.", "")        // "." also valid
+            .relativize("/a/..", "..")
+            .relativize("/x", "../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/a/b")
+            .relativize("/a/b", "")
+            .relativize("/a", "..")
+            .relativize("/", "../..")
+            .relativize("/.", "../..")
+            .relativize("/..", "../..")
+            .relativize("/../..", "../..")
+            .relativize("/a/b/c", "c")
+            .relativize("/a/.", "..")
+            .relativize("/a/..", "../..")
+            .relativize("/x", "../../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
         test("/a/b/c")
             .relativize("/a/b/c", "")
+            .relativize("/a/b", "..")
+            .relativize("/a", "../..")
+            .relativize("/", "../../..")
+            .relativize("/.", "../../..")
+            .relativize("/..", "../../..")
+            .relativize("/../..", "../../..")
+            .relativize("/../../..", "../../..")
+            .relativize("/../../../..", "../../..")
+            .relativize("/a/b/c/d", "d")
             .relativize("/a/b/c/d/e", "d/e")
+            .relativize("/a/b/c/.", "")        // "." also valid
+            .relativize("/a/b/c/..", "..")
             .relativize("/a/x", "../../x")
-            .relativize("/x", "../../../x");
+            .relativize("/x", "../../../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/../a")
+            .relativize("/a", "")
+            .relativize("/", "..")
+            .relativize("/.", "..")
+            .relativize("/..", "..")
+            .relativize("/../..", "..")
+            .relativize("/a/b", "b")
+            .relativize("/a/b/c", "b/c")
+            .relativize("/a/.", "")        // "." also valid
+            .relativize("/a/..", "..")
+            .relativize("/x", "../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/../a/b")
+            .relativize("/a/b", "")
+            .relativize("/a", "..")
+            .relativize("/", "../..")
+            .relativize("/.", "../..")
+            .relativize("/..", "../..")
+            .relativize("/../..", "../..")
+            .relativize("/../../..", "../..")
+            .relativize("/../../../..", "../..")
+            .relativize("/a/b/c", "c")
+            .relativize("/a/b/.", "")        // "." also valid
+            .relativize("/a/b/..", "..")
+            .relativize("/a/x", "../x")
+            .relativize("/x", "../../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/../../a/b")
+            .relativize("/a/b", "")
+            .relativize("/a", "..")
+            .relativize("/", "../..")
+            .relativize("/.", "../..")
+            .relativize("/..", "../..")
+            .relativize("/../..", "../..")
+            .relativize("/../../..", "../..")
+            .relativize("/../../../..", "../..")
+            .relativize("/a/b/c", "c")
+            .relativize("/a/b/.", "")        // "." also valid
+            .relativize("/a/b/..", "..")
+            .relativize("/a/x", "../x")
+            .relativize("/x", "../../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/../a/b/c")
+            .relativize("/a/b/c", "")
+            .relativize("/a/b", "..")
+            .relativize("/a", "../..")
+            .relativize("/", "../../..")
+            .relativize("/.", "../../..")
+            .relativize("/..", "../../..")
+            .relativize("/../..", "../../..")
+            .relativize("/../../..", "../../..")
+            .relativize("/../../../..", "../../..")
+            .relativize("/a/b/c/d", "d")
+            .relativize("/a/b/c/d/e", "d/e")
+            .relativize("/a/b/c/.", "")        // "." also valid
+            .relativize("/a/b/c/..", "..")
+            .relativize("/a/x", "../../x")
+            .relativize("/x", "../../../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/../../a/b/c")
+            .relativize("/a/b/c", "")
+            .relativize("/a/b", "..")
+            .relativize("/a", "../..")
+            .relativize("/", "../../..")
+            .relativize("/.", "../../..")
+            .relativize("/..", "../../..")
+            .relativize("/../..", "../../..")
+            .relativize("/../../..", "../../..")
+            .relativize("/../../../..", "../../..")
+            .relativize("/a/b/c/d", "d")
+            .relativize("/a/b/c/d/e", "d/e")
+            .relativize("/a/b/c/.", "")        // "." also valid
+            .relativize("/a/b/c/..", "..")
+            .relativize("/a/x", "../../x")
+            .relativize("/x", "../../../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/../../../a/b/c")
+            .relativize("/a/b/c", "")
+            .relativize("/a/b", "..")
+            .relativize("/a", "../..")
+            .relativize("/", "../../..")
+            .relativize("/.", "../../..")
+            .relativize("/..", "../../..")
+            .relativize("/../..", "../../..")
+            .relativize("/../../..", "../../..")
+            .relativize("/../../../..", "../../..")
+            .relativize("/a/b/c/d", "d")
+            .relativize("/a/b/c/d/e", "d/e")
+            .relativize("/a/b/c/.", "")        // "." also valid
+            .relativize("/a/b/c/..", "..")
+            .relativize("/a/x", "../../x")
+            .relativize("/x", "../../../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/./a")
+            .relativize("/a", "")
+            .relativize("/", "..")
+            .relativize("/.", "..")
+            .relativize("/..", "..")
+            .relativize("/../..", "..")
+            .relativize("/a/b", "b")
+            .relativize("/a/b/c", "b/c")
+            .relativize("/a/.", "")        // "." also valid
+            .relativize("/a/..", "..")
+            .relativize("/x", "../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/../a")
+            .relativize("/a", "")
+            .relativize("/", "..")
+            .relativize("/.", "..")
+            .relativize("/..", "..")
+            .relativize("/../..", "..")
+            .relativize("/a/b", "b")
+            .relativize("/a/b/c", "b/c")
+            .relativize("/a/.", "")        // "." also valid
+            .relativize("/a/..", "..")
+            .relativize("/x", "../x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/a/..")
+            .relativize("/a", "a")
+            .relativize("/", "")          // "." is also valid
+            .relativize("/.", "")
+            .relativize("/..", "")
+            .relativize("/../..", "")
+            .relativize("/a/.", "a")
+            .relativize("/a/..", "")
+            .relativize("/x", "x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("/")
+            .relativize("/a", "a")
+            .relativize("/", "")          // "." is also valid
+            .relativize("/.", "")
+            .relativize("/..", "")
+            .relativize("/../..", "")
+            .relativize("/a/.", "a")
+            .relativize("/a/..", "")
+            .relativize("/x", "x")
+            .relativizeFail("x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("..");
+        test("a")
+            .relativize("a", "")
+            .relativize("", "..")
+            .relativize(".", "..")
+            .relativize("..", "../..")
+            .relativize("../..", "../../..")
+            .relativize("./..", "../..")
+            .relativize("a/b", "b")
+            .relativize("a/b/c", "b/c")
+            .relativize("../x", "../../x")
+            .relativizeFail("/")
+            .relativizeFail("/x");
+        test("a/b")
+            .relativize("a/b", "")
+            .relativize("a", "..")
+            .relativize("", "../..")
+            .relativize(".", "../..")
+            .relativize("..", "../../..")
+            .relativize("../..", "../../../..")
+            .relativize("./..", "../../..")
+            .relativize("a/b/c", "c")
+            .relativize("../x", "../../../x")
+            .relativizeFail("/")
+            .relativizeFail("/x");
         test("a/b/c")
+            .relativize("a/b/c", "")
+            .relativize("a/b", "..")
+            .relativize("a", "../..")
+            .relativize("", "../../..")
+            .relativize(".", "../../..")
+            .relativize("..", "../../../..")
+            .relativize("../..", "../../../../..")
+            .relativize("./..", "../../../..")
             .relativize("a/b/c/d", "d")
+            .relativize("a/b/c/d/e", "d/e")
             .relativize("a/x", "../../x")
-            .relativize("x", "../../../x")
-            .relativize("", "../../..");
+            .relativize("../x", "../../../../x")
+            .relativizeFail("/")
+            .relativizeFail("/x");
         test("")
             .relativize("a", "a")
             .relativize("a/b/c", "a/b/c")
-            .relativize("", "");
+            .relativize("", "")
+            .relativize(".", ".")
+            .relativize("..", "..")
+            .relativize("../..", "../..")
+            .relativize("./..", "./..")     // ".." also valid
+            .relativizeFail("/")
+            .relativizeFail("/x");
+        test("..")
+            .relativize("../a", "a")
+            .relativize("..", "")
+            .relativize("./..", "")
+            .relativizeFail("/")
+            .relativizeFail("/x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("x");
+        test("../a")
+            .relativize("../a/b", "b")
+            .relativize("../a", "")
+            .relativize("..", "..")
+            .relativize("./..", "..")
+            .relativizeFail("/")
+            .relativizeFail("/x")
+            .relativizeFail("")
+            .relativizeFail(".")
+            .relativizeFail("x");
+        test("../a/b")
+            .relativize("../a/b/c", "c")
+            .relativize("../a/b", "")
+            .relativize("../a", "..")
+            .relativize("..", "../..")
+            .relativize("./..", "../..")
+            .relativizeFail("/")
+            .relativizeFail("/x")
+            .relativizeFail("")
+            .relativizeFail("x");
+        test("a/..")
+            .relativize("b", "b")
+            .relativize("", "")
+            .relativize(".", "")       // "." also valid
+            .relativize("..", "..")
+            .relativize("a/../b", "b")
+            .relativize("a/..", "")
+            .relativize("../b", "../b")
+            .relativize("b/..", "")
+            .relativizeFail("/")
+            .relativizeFail("/x");
+        test("a/../b")
+            .relativize("a/../b", "")
+            .relativize("a/..", "..")
+            .relativize("", "..")
+            .relativize(".", "..")
+            .relativize("..", "../..")
+            .relativize("b", "")
+            .relativize("c", "../c")
+            .relativize("../c", "../../c")
+            .relativize("a/../b/c", "c")
+            .relativizeFail("/")
+            .relativizeFail("/x");
 
         // normalize
         test("/")

@@ -168,10 +168,10 @@ class FileTreeWalker implements Closeable {
      * @throws  IllegalArgumentException
      *          if {@code maxDepth} is negative
      * @throws  ClassCastException
-     *          if (@code options} contains an element that is not a
+     *          if {@code options} contains an element that is not a
      *          {@code FileVisitOption}
      * @throws  NullPointerException
-     *          if {@code options} is {@ocde null} or the options
+     *          if {@code options} is {@code null} or the options
      *          array contains a {@code null} element
      */
     FileTreeWalker(Collection<FileVisitOption> options, int maxDepth) {

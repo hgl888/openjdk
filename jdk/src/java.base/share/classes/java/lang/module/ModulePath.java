@@ -52,10 +52,12 @@ import java.util.jar.Manifest;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-import jdk.internal.module.Checks;
+import jdk.internal.jmod.JmodFile;
+import jdk.internal.jmod.JmodFile.Section;
 import jdk.internal.module.ConfigurableModuleFinder;
 import jdk.internal.perf.PerfCounter;
 
@@ -294,11 +296,11 @@ class ModulePath implements ConfigurableModuleFinder {
 
     // -- jmod files --
 
-    private Set<String> jmodPackages(ZipFile zf) {
-        return zf.stream()
-            .filter(e -> e.getName().startsWith("classes/") &&
-                    e.getName().endsWith(".class"))
-            .map(e -> toPackageName(e.getName().substring(8)))
+    private Set<String> jmodPackages(JmodFile jf) {
+        return jf.stream()
+            .filter(e -> e.section() == Section.CLASSES)
+            .map(JmodFile.Entry::name)
+            .map(this::toPackageName)
             .filter(pkg -> pkg.length() > 0) // module-info
             .collect(Collectors.toSet());
     }
@@ -311,14 +313,10 @@ class ModulePath implements ConfigurableModuleFinder {
      * @throws InvalidModuleDescriptorException
      */
     private ModuleReference readJMod(Path file) throws IOException {
-        try (ZipFile zf = new ZipFile(file.toString())) {
-            ZipEntry ze = zf.getEntry("classes/" + MODULE_INFO);
-            if (ze == null) {
-                throw new IOException(MODULE_INFO + " is missing: " + file);
-            }
+        try (JmodFile jf = new JmodFile(file)) {
             ModuleDescriptor md;
-            try (InputStream in = zf.getInputStream(ze)) {
-                md = ModuleDescriptor.read(in, () -> jmodPackages(zf));
+            try (InputStream in = jf.getInputStream(Section.CLASSES, MODULE_INFO)) {
+                md = ModuleDescriptor.read(in, () -> jmodPackages(jf));
             }
             return ModuleReferences.newJModModule(md, file);
         }
@@ -343,8 +341,7 @@ class ModulePath implements ConfigurableModuleFinder {
             String prefix = cf.substring(0, index);
             if (prefix.equals(SERVICES_PREFIX)) {
                 String sn = cf.substring(index);
-                if (Checks.isJavaIdentifier(sn))
-                    return Optional.of(sn);
+                return Optional.of(sn);
             }
         }
         return Optional.empty();
@@ -378,9 +375,6 @@ class ModulePath implements ConfigurableModuleFinder {
      *    to "provides" declarations
      * 5. The Main-Class attribute in the main attributes of the JAR manifest
      *    is mapped to the module descriptor mainClass
-     *
-     * @apiNote This needs to move to somewhere where it can be used by tools,
-     * maybe even a standard API if automatic modules are a Java SE feature.
      */
     private ModuleDescriptor deriveModuleDescriptor(JarFile jf)
         throws IOException
@@ -397,7 +391,7 @@ class ModulePath implements ConfigurableModuleFinder {
         String vs = null;
 
         // find first occurrence of -${NUMBER}. or -${NUMBER}$
-        Matcher matcher = Pattern.compile("-(\\d+(\\.|$))").matcher(mn);
+        Matcher matcher = Patterns.DASH_VERSION.matcher(mn);
         if (matcher.find()) {
             int start = matcher.start();
 
@@ -412,23 +406,20 @@ class ModulePath implements ConfigurableModuleFinder {
         }
 
         // finally clean up the module name
-        mn =  mn.replaceAll("[^A-Za-z0-9]", ".")  // replace non-alphanumeric
-                .replaceAll("(\\.)(\\1)+", ".")   // collapse repeating dots
-                .replaceAll("^\\.", "")           // drop leading dots
-                .replaceAll("\\.$", "");          // drop trailing dots
-
+        mn = cleanModuleName(mn);
 
         // Builder throws IAE if module name is empty or invalid
         ModuleDescriptor.Builder builder
-            = new ModuleDescriptor.Builder(mn, true)
-                .requires(Requires.Modifier.MANDATED, "java.base");
+            = new ModuleDescriptor.Builder(mn)
+                .automatic()
+                .requires(Set.of(Requires.Modifier.MANDATED), "java.base");
         if (vs != null)
             builder.version(vs);
 
         // scan the entries in the JAR file to locate the .class and service
         // configuration file
         Map<Boolean, Set<String>> map =
-            jf.stream()
+            versionedStream(jf)
               .map(JarEntry::getName)
               .filter(s -> (s.endsWith(".class") ^ s.startsWith(SERVICES_PREFIX)))
               .collect(Collectors.partitioningBy(s -> s.endsWith(".class"),
@@ -457,7 +448,7 @@ class ModulePath implements ConfigurableModuleFinder {
                     = new BufferedReader(new InputStreamReader(in, "UTF-8"));
                 String cn;
                 while ((cn = nextLine(reader)) != null) {
-                    if (Checks.isJavaIdentifier(cn)) {
+                    if (cn.length() > 0) {
                         providerClasses.add(cn);
                     }
                 }
@@ -478,8 +469,54 @@ class ModulePath implements ConfigurableModuleFinder {
         return builder.build();
     }
 
+    /**
+     * Patterns used to derive the module name from a JAR file name.
+     */
+    private static class Patterns {
+        static final Pattern DASH_VERSION = Pattern.compile("-(\\d+(\\.|$))");
+        static final Pattern NON_ALPHANUM = Pattern.compile("[^A-Za-z0-9]");
+        static final Pattern REPEATING_DOTS = Pattern.compile("(\\.)(\\1)+");
+        static final Pattern LEADING_DOTS = Pattern.compile("^\\.");
+        static final Pattern TRAILING_DOTS = Pattern.compile("\\.$");
+    }
+
+    /**
+     * Clean up candidate module name derived from a JAR file name.
+     */
+    private static String cleanModuleName(String mn) {
+        // replace non-alphanumeric
+        mn = Patterns.NON_ALPHANUM.matcher(mn).replaceAll(".");
+
+        // collapse repeating dots
+        mn = Patterns.REPEATING_DOTS.matcher(mn).replaceAll(".");
+
+        // drop leading dots
+        if (mn.length() > 0 && mn.charAt(0) == '.')
+            mn = Patterns.LEADING_DOTS.matcher(mn).replaceAll("");
+
+        // drop trailing dots
+        int len = mn.length();
+        if (len > 0 && mn.charAt(len-1) == '.')
+            mn = Patterns.TRAILING_DOTS.matcher(mn).replaceAll("");
+
+        return mn;
+    }
+
+    private Stream<JarEntry> versionedStream(JarFile jf) {
+        if (jf.isMultiRelease()) {
+            // a stream of JarEntries whose names are base names and whose
+            // contents are from the corresponding versioned entries in
+            // a multi-release jar file
+            return jf.stream().map(JarEntry::getName)
+                    .filter(name -> !name.startsWith("META-INF/versions/"))
+                    .map(jf::getJarEntry);
+        } else {
+            return jf.stream();
+        }
+    }
+
     private Set<String> jarPackages(JarFile jf) {
-        return jf.stream()
+        return versionedStream(jf)
             .filter(e -> e.getName().endsWith(".class"))
             .map(e -> toPackageName(e.getName()))
             .filter(pkg -> pkg.length() > 0)   // module-info
@@ -498,7 +535,7 @@ class ModulePath implements ConfigurableModuleFinder {
         try (JarFile jf = new JarFile(file.toFile(),
                                       true,               // verify
                                       ZipFile.OPEN_READ,
-                                      JarFile.Release.RUNTIME))
+                                      JarFile.runtimeVersion()))
         {
             ModuleDescriptor md;
             JarEntry entry = jf.getJarEntry(MODULE_INFO);

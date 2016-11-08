@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1996, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1996, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -1413,27 +1413,7 @@ public class ObjectStreamClass implements Serializable {
      * returned constructor (if any).
      */
     private static Constructor<?> getSerializableConstructor(Class<?> cl) {
-        Class<?> initCl = cl;
-        while (Serializable.class.isAssignableFrom(initCl)) {
-            if ((initCl = initCl.getSuperclass()) == null) {
-                return null;
-            }
-        }
-        try {
-            Constructor<?> cons = initCl.getDeclaredConstructor((Class<?>[]) null);
-            int mods = cons.getModifiers();
-            if ((mods & Modifier.PRIVATE) != 0 ||
-                ((mods & (Modifier.PUBLIC | Modifier.PROTECTED)) == 0 &&
-                 !packageEquals(cl, initCl)))
-            {
-                return null;
-            }
-            cons = reflFactory.newConstructorForSerialization(cl, cons);
-            cons.setAccessible(true);
-            return cons;
-        } catch (NoSuchMethodException ex) {
-            return null;
-        }
+        return reflFactory.newConstructorForSerialization(cl);
     }
 
     /**
@@ -1509,11 +1489,9 @@ public class ObjectStreamClass implements Serializable {
     private static String getPackageName(Class<?> cl) {
         String s = cl.getName();
         int i = s.lastIndexOf('[');
-        if (i >= 0) {
-            s = s.substring(i + 2);
-        }
-        i = s.lastIndexOf('.');
-        return (i >= 0) ? s.substring(0, i) : "";
+        i = (i < 0) ? 0 : i + 2;
+        int j = s.lastIndexOf('.');
+        return (i < j) ? s.substring(i, j) : "";
     }
 
     /**
@@ -1535,14 +1513,14 @@ public class ObjectStreamClass implements Serializable {
     private static String getMethodSignature(Class<?>[] paramTypes,
                                              Class<?> retType)
     {
-        StringBuilder sbuf = new StringBuilder();
-        sbuf.append('(');
+        StringBuilder sb = new StringBuilder();
+        sb.append('(');
         for (int i = 0; i < paramTypes.length; i++) {
-            appendClassSignature(sbuf, paramTypes[i]);
+            appendClassSignature(sb, paramTypes[i]);
         }
-        sbuf.append(')');
-        appendClassSignature(sbuf, retType);
-        return sbuf.toString();
+        sb.append(')');
+        appendClassSignature(sb, retType);
+        return sb.toString();
     }
 
     /**

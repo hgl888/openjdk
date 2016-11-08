@@ -31,14 +31,19 @@
     <ModuleDoc>
         <Content>
             <ModuleDescription/>
+            <ModuleTags/>
             <Summary>
-                <PackageSummary/>
+                <ModulesSummary/>
+                <PackagesSummary/>
+                <ServicesSummary/>
             </Summary>
         </Content>
     </ModuleDoc>
 
     <PackageDoc>
         <Content>
+            <PackageDescription/>
+            <PackageTags/>
             <Summary>
                 <InterfaceSummary/>
                 <ClassSummary/>
@@ -47,8 +52,6 @@
                 <ErrorSummary/>
                 <AnnotationTypeSummary/>
             </Summary>
-            <PackageDescription/>
-            <PackageTags/>
         </Content>
     </PackageDoc>
 

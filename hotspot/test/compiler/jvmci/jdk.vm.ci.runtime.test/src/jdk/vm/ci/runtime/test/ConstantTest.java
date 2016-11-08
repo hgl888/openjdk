@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2014, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,20 +23,16 @@
 
 /**
  * @test
- * @requires (os.simpleArch == "x64" | os.simpleArch == "sparcv9" | os.simpleArch == "aarch64")
+ * @requires (vm.simpleArch == "x64" | vm.simpleArch == "sparcv9" | vm.simpleArch == "aarch64")
  * @library ../../../../../
  * @modules jdk.vm.ci/jdk.vm.ci.meta
  *          jdk.vm.ci/jdk.vm.ci.runtime
  *          java.base/jdk.internal.misc
- * @build jdk.vm.ci.runtime.test.ConstantTest
  * @run junit/othervm -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI jdk.vm.ci.runtime.test.ConstantTest
  */
-// * @compile ConstantTest.java FieldUniverse.java TypeUniverse.java TestMetaAccessProvider.java
 package jdk.vm.ci.runtime.test;
 
 import jdk.vm.ci.meta.JavaConstant;
-import jdk.vm.ci.meta.JavaKind;
-
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -51,31 +47,5 @@ public class ConstantTest extends FieldUniverse {
     @Test
     public void testNullIsNull() {
         Assert.assertTrue(JavaConstant.NULL_POINTER.isNull());
-    }
-
-    @Test
-    public void testOne() {
-        for (JavaKind kind : JavaKind.values()) {
-            if (kind.isNumericInteger() || kind.isNumericFloat()) {
-                Assert.assertTrue(JavaConstant.one(kind).getJavaKind() == kind);
-            }
-        }
-        Assert.assertEquals(1, JavaConstant.one(JavaKind.Int).asInt());
-        Assert.assertEquals(1L, JavaConstant.one(JavaKind.Long).asLong());
-        Assert.assertEquals(1, JavaConstant.one(JavaKind.Byte).asInt());
-        Assert.assertEquals(1, JavaConstant.one(JavaKind.Short).asInt());
-        Assert.assertEquals(1, JavaConstant.one(JavaKind.Char).asInt());
-        Assert.assertTrue(1F == JavaConstant.one(JavaKind.Float).asFloat());
-        Assert.assertTrue(1D == JavaConstant.one(JavaKind.Double).asDouble());
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void testIllegalOne() {
-        JavaConstant.one(JavaKind.Illegal);
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void testVoidOne() {
-        JavaConstant.one(JavaKind.Void);
     }
 }

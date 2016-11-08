@@ -24,17 +24,16 @@
  */
 package jdk.tools.jlink.internal.plugins;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.UncheckedIOException;
+import java.util.AbstractMap;
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.IllformedLocaleException;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import static java.util.ResourceBundle.Control;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
@@ -44,12 +43,16 @@ import java.util.stream.Stream;
 import jdk.internal.org.objectweb.asm.ClassReader;
 import jdk.tools.jlink.internal.ResourcePrevisitor;
 import jdk.tools.jlink.internal.StringTable;
-import jdk.tools.jlink.internal.Utils;
-import jdk.tools.jlink.plugin.LinkModule;
-import jdk.tools.jlink.plugin.ModuleEntry;
+import jdk.tools.jlink.plugin.ResourcePoolModule;
 import jdk.tools.jlink.plugin.PluginException;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.plugin.TransformerPlugin;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.ResourcePoolBuilder;
+import jdk.tools.jlink.plugin.ResourcePoolEntry;
+import jdk.tools.jlink.plugin.Plugin;
+import sun.util.cldr.CLDRBaseLocaleDataMetaInfo;
+import sun.util.locale.provider.LocaleProviderAdapter;
+import sun.util.locale.provider.LocaleProviderAdapter.Type;
+import sun.util.locale.provider.ResourceBundleBasedAdapter;
 
 /**
  * Plugin to explicitly specify the locale data included in jdk.localedata
@@ -73,7 +76,7 @@ import jdk.tools.jlink.plugin.TransformerPlugin;
  *     start with at least one white space character, e.g., " ar ar-EG ..."
  *                                                           ^
  */
-public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePrevisitor {
+public final class IncludeLocalesPlugin implements Plugin, ResourcePrevisitor {
 
     public static final String NAME = "include-locales";
     private static final String MODULENAME = "jdk.localedata";
@@ -85,20 +88,56 @@ public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePr
         "sun.util.resources.ext",
         "sun.util.resources.provider");
     private static final String METAINFONAME = "LocaleDataMetaInfo";
-    private static final String META_FILES =
-        "*module-info.class," +
-        "*LocaleDataProvider.class," +
-        "*" + METAINFONAME + ".class,";
-    private static final String INCLUDE_LOCALE_FILES =
-        "*sun/text/resources/ext/[^\\/]+_%%.class," +
-        "*sun/util/resources/ext/[^\\/]+_%%.class," +
-        "*sun/text/resources/cldr/ext/[^\\/]+_%%.class," +
-        "*sun/util/resources/cldr/ext/[^\\/]+_%%.class,";
+    private static final List<String> META_FILES = List.of(
+        ".+module-info.class",
+        ".+LocaleDataProvider.class",
+        ".+" + METAINFONAME + ".class");
+    private static final List<String> INCLUDE_LOCALE_FILES = List.of(
+        ".+sun/text/resources/ext/[^_]+_",
+        ".+sun/util/resources/ext/[^_]+_",
+        ".+sun/text/resources/cldr/ext/[^_]+_",
+        ".+sun/util/resources/cldr/ext/[^_]+_");
     private Predicate<String> predicate;
     private String userParam;
     private List<Locale.LanguageRange> priorityList;
     private List<Locale> available;
     private List<String> filtered;
+
+    private static final ResourceBundleBasedAdapter CLDR_ADAPTER =
+        (ResourceBundleBasedAdapter)LocaleProviderAdapter.forType(Type.CLDR);
+    private static final Map<Locale, String[]> CLDR_PARENT_LOCALES =
+        new CLDRBaseLocaleDataMetaInfo().parentLocales();
+
+    // Equivalent map
+    private static final Map<String, List<String>> EQUIV_MAP =
+        Stream.concat(
+            // COMPAT equivalence
+            Map.of(
+                "zh-Hans", List.of("zh-Hans", "zh-CN", "zh-SG"),
+                "zh-Hant", List.of("zh-Hant", "zh-HK", "zh-MO", "zh-TW"))
+                .entrySet()
+                .stream(),
+
+            // CLDR parent locales
+            CLDR_PARENT_LOCALES.entrySet().stream()
+                .map(entry -> {
+                    String parent = entry.getKey().toLanguageTag();
+                    List<String> children = new ArrayList<>();
+                    children.add(parent);
+
+                    Arrays.stream(entry.getValue())
+                        .filter(child -> !child.isEmpty())
+                        .flatMap(child ->
+                            Stream.concat(
+                                Arrays.stream(CLDR_PARENT_LOCALES.getOrDefault(
+                                    Locale.forLanguageTag(child), new String[0]))
+                                        .filter(grandchild -> !grandchild.isEmpty()),
+                                List.of(child).stream()))
+                        .distinct()
+                        .forEach(children::add);
+                    return new AbstractMap.SimpleEntry<String, List<String>>(parent, children);
+                })
+        ).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
     // Special COMPAT provider locales
     private static final String jaJPJPTag = "ja-JP-JP";
@@ -114,33 +153,31 @@ public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePr
     }
 
     @Override
-    public void visit(ModulePool in, ModulePool out) {
+    public ResourcePool transform(ResourcePool in, ResourcePoolBuilder out) {
         in.transformAndCopy((resource) -> {
-            if (resource.getModule().equals(MODULENAME)) {
-                String path = resource.getPath();
+            if (resource.moduleName().equals(MODULENAME)) {
+                String path = resource.path();
                 resource = predicate.test(path) ? resource: null;
                 if (resource != null &&
-                    resource.getType().equals(ModuleEntry.Type.CLASS_OR_RESOURCE)) {
-                    byte[] bytes = resource.getBytes();
+                    resource.type().equals(ResourcePoolEntry.Type.CLASS_OR_RESOURCE)) {
+                    byte[] bytes = resource.contentBytes();
                     ClassReader cr = new ClassReader(bytes);
                     if (Arrays.stream(cr.getInterfaces())
                         .anyMatch(i -> i.contains(METAINFONAME)) &&
                         stripUnsupportedLocales(bytes, cr)) {
-                        resource = ModuleEntry.create(MODULENAME, path,
-                            resource.getType(),
-                            new ByteArrayInputStream(bytes), bytes.length);
+                        resource = resource.copyWithContent(bytes);
                     }
                 }
             }
             return resource;
         }, out);
+
+        return out.build();
     }
 
     @Override
-    public Set<Category> getType() {
-        Set<Category> set = new HashSet<>();
-        set.add(Category.FILTER);
-        return Collections.unmodifiableSet(set);
+    public Category getType() {
+        return Category.FILTER;
     }
 
     @Override
@@ -161,27 +198,25 @@ public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePr
     @Override
     public void configure(Map<String, String> config) {
         userParam = config.get(NAME);
-        priorityList = Arrays.stream(userParam.split(","))
-            .map(s -> {
-                try {
-                    return new Locale.LanguageRange(s);
-                } catch (IllegalArgumentException iae) {
-                    throw new IllegalArgumentException(String.format(
-                        PluginsResourceBundle.getMessage(NAME + ".invalidtag"), s));
-                }
-            })
-            .collect(Collectors.toList());
+
+        try {
+            priorityList = Locale.LanguageRange.parse(userParam, EQUIV_MAP);
+        } catch (IllegalArgumentException iae) {
+            throw new IllegalArgumentException(String.format(
+                PluginsResourceBundle.getMessage(NAME + ".invalidtag"),
+                    iae.getMessage().replaceFirst("^range=", "")));
+        }
     }
 
     @Override
-    public void previsit(ModulePool resources, StringTable strings) {
+    public void previsit(ResourcePool resources, StringTable strings) {
         final Pattern p = Pattern.compile(".*((Data_)|(Names_))(?<tag>.*)\\.class");
-        Optional<LinkModule> optMod = resources.findModule(MODULENAME);
+        Optional<ResourcePoolModule> optMod = resources.moduleView().findModule(MODULENAME);
 
         // jdk.localedata module validation
         if (optMod.isPresent()) {
-            LinkModule module = optMod.get();
-            Set<String> packages = module.getAllPackages();
+            ResourcePoolModule module = optMod.get();
+            Set<String> packages = module.packages();
             if (!packages.containsAll(LOCALEDATA_PACKAGES)) {
                 throw new PluginException(PluginsResourceBundle.getMessage(NAME + ".missingpackages") +
                     LOCALEDATA_PACKAGES.stream()
@@ -190,7 +225,7 @@ public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePr
             }
 
             available = Stream.concat(module.entries()
-                                        .map(md -> p.matcher(md.getPath()))
+                                        .map(md -> p.matcher(md.path()))
                                         .filter(m -> m.matches())
                                         .map(m -> m.group("tag").replaceAll("_", "-")),
                                     Stream.concat(Stream.of(jaJPJPTag), Stream.of(thTHTHTag)))
@@ -202,6 +237,7 @@ public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePr
             // jdk.localedata is not added.
             throw new PluginException(PluginsResourceBundle.getMessage(NAME + ".localedatanotfound"));
         }
+
         filtered = filterLocales(available);
 
         if (filtered.isEmpty()) {
@@ -209,67 +245,41 @@ public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePr
                 String.format(PluginsResourceBundle.getMessage(NAME + ".nomatchinglocales"), userParam));
         }
 
-        try {
-            String value = META_FILES + filtered.stream()
-                .map(s -> includeLocaleFilePatterns(s))
-                .collect(Collectors.joining(","));
-            predicate = new ResourceFilter(Utils.listParser.apply(value), false);
-        } catch (IOException ex) {
-            throw new UncheckedIOException(ex);
-        }
+        List<String> value = Stream.concat(
+                META_FILES.stream(),
+                filtered.stream().flatMap(s -> includeLocaleFilePatterns(s).stream()))
+            .map(s -> "regex:" + s)
+            .collect(Collectors.toList());
+
+        predicate = ResourceFilter.includeFilter(value);
     }
 
-    private String includeLocaleFilePatterns(String tag) {
-        String pTag = tag.replaceAll("-", "_");
-        String files = "";
-        int lastDelimiter = tag.length();
-        String isoSpecial = pTag.matches("^(he|yi|id).*") ?
-                            pTag.replaceFirst("he", "iw")
-                                .replaceFirst("yi", "ji")
-                                .replaceFirst("id", "in") : "";
-
-        // Add tag patterns including parents
-        while (true) {
-            pTag = pTag.substring(0, lastDelimiter);
-            files += INCLUDE_LOCALE_FILES.replaceAll("%%", pTag);
-
-            if (!isoSpecial.isEmpty()) {
-                isoSpecial = isoSpecial.substring(0, lastDelimiter);
-                files += INCLUDE_LOCALE_FILES.replaceAll("%%", isoSpecial);
-            }
-
-            lastDelimiter = pTag.lastIndexOf('_');
-            if (lastDelimiter == -1) {
-                break;
-            }
+    private List<String> includeLocaleFilePatterns(String tag) {
+        // Ignore extension variations
+        if (tag.matches(".+-[a-z]-.+")) {
+            return List.of();
         }
 
-        final String lang = pTag;
-
-        // Add possible special locales of the COMPAT provider
-        files += Set.of(jaJPJPTag, noNONYTag, thTHTHTag).stream()
-            .filter(stag -> lang.equals(stag.substring(0,2)))
-            .map(t -> INCLUDE_LOCALE_FILES.replaceAll("%%", t.replaceAll("-", "_")))
-            .collect(Collectors.joining(","));
-
-        // Add possible UN.M49 files (unconditional for now) for each language
-        files += INCLUDE_LOCALE_FILES.replaceAll("%%", lang + "_[0-9]{3}");
-        if (!isoSpecial.isEmpty()) {
-            files += INCLUDE_LOCALE_FILES.replaceAll("%%", isoSpecial + "_[0-9]{3}");
-        }
+        List<String> files = new ArrayList<>(includeLocaleFiles(tag.replaceAll("-", "_")));
 
         // Add Thai BreakIterator related data files
-        if (lang.equals("th")) {
-            files += "*sun/text/resources/thai_dict," +
-                     "*sun/text/resources/[^\\/]+BreakIteratorData_th,";
+        if (tag.equals("th")) {
+            files.add(".+sun/text/resources/ext/thai_dict");
+            files.add(".+sun/text/resources/ext/[^_]+BreakIteratorData_th");
         }
 
         // Add Taiwan resource bundles for Hong Kong
-        if (tag.startsWith("zh-HK")) {
-            files += INCLUDE_LOCALE_FILES.replaceAll("%%", "zh_TW");
+        if (tag.equals("zh-HK")) {
+            files.addAll(includeLocaleFiles("zh_TW"));
         }
 
         return files;
+    }
+
+    private List<String> includeLocaleFiles(String localeStr) {
+        return INCLUDE_LOCALE_FILES.stream()
+            .map(s -> s + localeStr + ".class")
+            .collect(Collectors.toList());
     }
 
     private boolean stripUnsupportedLocales(byte[] bytes, ClassReader cr) {
@@ -297,9 +307,10 @@ public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePr
 
     private boolean filterOutUnsupportedTags(byte[] b) {
         List<Locale> locales;
+        List<String> originalTags = Arrays.asList(new String(b).split(" "));
 
         try {
-            locales = Arrays.asList(new String(b).split(" ")).stream()
+            locales = originalTags.stream()
                 .filter(tag -> !tag.isEmpty())
                 .map(IncludeLocalesPlugin::tagToLocale)
                 .collect(Collectors.toList());
@@ -309,31 +320,43 @@ public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePr
         }
 
         byte[] filteredBytes = filterLocales(locales).stream()
+            // Make sure the filtered language tags do exist in the
+            // original supported tags for compatibility codes, e.g., "iw"
+            .filter(originalTags::contains)
             .collect(Collectors.joining(" "))
             .getBytes();
+
+        if (filteredBytes.length > b.length) {
+            throw new InternalError("Size of filtered locales is bigger than the original one");
+        }
+
         System.arraycopy(filteredBytes, 0, b, 0, filteredBytes.length);
         Arrays.fill(b, filteredBytes.length, b.length, (byte)' ');
         return true;
     }
 
+    /*
+     * Filter list of locales according to the secified priorityList. Note
+     * that returned list of language tags may include extra ones, such as
+     * compatibility ones (e.g., "iw" -> "iw", "he").
+     */
     private List<String> filterLocales(List<Locale> locales) {
         List<String> ret =
             Locale.filter(priorityList, locales, Locale.FilteringMode.EXTENDED_FILTERING).stream()
+                .flatMap(loc -> Stream.concat(Control.getNoFallbackControl(Control.FORMAT_DEFAULT)
+                                     .getCandidateLocales("", loc).stream(),
+                                CLDR_ADAPTER.getCandidateLocales("", loc).stream()))
                 .map(loc ->
                     // Locale.filter() does not preserve the case, which is
                     // significant for "variant" equality. Retrieve the original
                     // locales from the pre-filtered list.
                     locales.stream()
                         .filter(l -> l.toString().equalsIgnoreCase(loc.toString()))
-                        .findAny()
-                        .orElse(Locale.ROOT)
-                        .toLanguageTag())
+                        .findAny())
+                .flatMap(Optional::stream)
+                .flatMap(IncludeLocalesPlugin::localeToTags)
+                .distinct()
                 .collect(Collectors.toList());
-
-        // no-NO-NY.toLanguageTag() returns "nn-NO", so specially handle it here
-        if (ret.contains("no-NO")) {
-            ret.add(noNONYTag);
-        }
 
         return ret;
     }
@@ -343,6 +366,7 @@ public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePr
         // ISO3166 compatibility
         tag = tag.replaceFirst("^iw", "he").replaceFirst("^ji", "yi").replaceFirst("^in", "id");
 
+        // Special COMPAT provider locales
         switch (tag) {
             case jaJPJPTag:
                 return jaJPJP;
@@ -355,5 +379,45 @@ public final class IncludeLocalesPlugin implements TransformerPlugin, ResourcePr
                 LOCALE_BUILDER.setLanguageTag(tag);
                 return LOCALE_BUILDER.build();
         }
+    }
+
+    private static Stream<String> localeToTags(Locale loc) {
+        Objects.requireNonNull(loc);
+
+        String tag = loc.toLanguageTag();
+        List<String> tags = null;
+
+        switch (loc.getLanguage()) {
+            // ISO3166 compatibility
+            case "iw":
+                tags = List.of(tag, tag.replaceFirst("^he", "iw"));
+                break;
+            case "in":
+                tags = List.of(tag, tag.replaceFirst("^id", "in"));
+                break;
+            case "ji":
+                tags = List.of(tag, tag.replaceFirst("^yi", "ji"));
+                break;
+
+            // Special COMPAT provider locales
+            case "ja":
+                if (loc.getCountry() == "JP") {
+                    tags = List.of(tag, jaJPJPTag);
+                }
+                break;
+            case "no":
+            case "nn":
+                if (loc.getCountry() == "NO") {
+                    tags = List.of(tag, noNONYTag);
+                }
+                break;
+            case "th":
+                if (loc.getCountry() == "TH") {
+                    tags = List.of(tag, thTHTHTag);
+                }
+                break;
+        }
+
+        return tags == null ? List.of(tag).stream() : tags.stream();
     }
 }

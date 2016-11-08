@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,11 +22,15 @@
  */
 
 /*
- *@test
- *@bug 8007572 8008161
- *@summary Test whether the TimeZone generated from JSR310 tzdb is the same
- *as the one from the tz data from javazic
+ * @test
+ * @bug 8007572 8008161 8157792
+ * @summary Test whether the TimeZone generated from JSR310 tzdb is the same
+ * as the one from the tz data from javazic
  * @modules java.base/sun.util.calendar
+ * @build BackEnd Checksum DayOfWeek Gen GenDoc Main Mappings Month
+ *        Rule RuleDay RuleRec Simple TestZoneInfo310 Time Timezone
+ *        TzIDOldMapping Zone ZoneInfoFile ZoneInfoOld ZoneRec Zoneinfo
+ * @run main TestZoneInfo310
  */
 
 import java.io.File;

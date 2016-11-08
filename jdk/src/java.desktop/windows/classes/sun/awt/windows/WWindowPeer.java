@@ -34,7 +34,7 @@ import java.beans.*;
 import java.util.*;
 import java.util.List;
 import sun.util.logging.PlatformLogger;
-
+import java.awt.geom.AffineTransform;
 import sun.awt.*;
 
 import sun.java2d.pipe.Region;
@@ -177,12 +177,17 @@ public class WWindowPeer extends WPanelPeer implements WindowPeer,
 
         updateInsets(insets_);
 
-        Font f = ((Window)target).getFont();
-        if (f == null) {
-            f = defaultFont;
-            ((Window)target).setFont(f);
-            setFont(f);
+        if (!((Window) target).isFontSet()) {
+            ((Window) target).setFont(defaultFont);
+            setFont(defaultFont);
         }
+        if (!((Window) target).isForegroundSet()) {
+            ((Window) target).setForeground(SystemColor.windowText);
+        }
+        if (!((Window) target).isBackgroundSet()) {
+            ((Window) target).setBackground(SystemColor.window);
+        }
+
         // Express our interest in display changes
         GraphicsConfiguration gc = getGraphicsConfiguration();
         ((Win32GraphicsDevice)gc.getDevice()).addDisplayChangedListener(this);
@@ -386,6 +391,11 @@ public class WWindowPeer extends WPanelPeer implements WindowPeer,
             int h = getSysIconHeight();
             int smw = getSysSmIconWidth();
             int smh = getSysSmIconHeight();
+            AffineTransform tx = getGraphicsConfiguration().getDefaultTransform();
+            w = Region.clipScale(w, tx.getScaleX());
+            h = Region.clipScale(h, tx.getScaleY());
+            smw = Region.clipScale(smw, tx.getScaleX());
+            smh = Region.clipScale(smh, tx.getScaleY());
             DataBufferInt iconData = SunToolkit.getScaledIconData(imageList,
                                                                   w, h);
             DataBufferInt iconSmData = SunToolkit.getScaledIconData(imageList,

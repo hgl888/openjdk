@@ -27,7 +27,6 @@ package java.util.stream;
 import java.util.AbstractMap;
 import java.util.AbstractSet;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -295,7 +294,13 @@ public final class Collectors {
     public static <T>
     Collector<T, ?, Set<T>> toSet() {
         return new CollectorImpl<>((Supplier<Set<T>>) HashSet::new, Set::add,
-                                   (left, right) -> { left.addAll(right); return left; },
+                                   (left, right) -> {
+                                       if (left.size() < right.size()) {
+                                           right.addAll(left); return right;
+                                       } else {
+                                           left.addAll(right); return left;
+                                       }
+                                   },
                                    CH_UNORDERED_ID);
     }
 
@@ -1714,12 +1719,12 @@ public final class Collectors {
 
         @Override
         public Set<Map.Entry<Boolean, T>> entrySet() {
-            return new AbstractSet<Map.Entry<Boolean, T>>() {
+            return new AbstractSet<>() {
                 @Override
                 public Iterator<Map.Entry<Boolean, T>> iterator() {
                     Map.Entry<Boolean, T> falseEntry = new SimpleImmutableEntry<>(false, forFalse);
                     Map.Entry<Boolean, T> trueEntry = new SimpleImmutableEntry<>(true, forTrue);
-                    return Arrays.asList(falseEntry, trueEntry).iterator();
+                    return List.of(falseEntry, trueEntry).iterator();
                 }
 
                 @Override

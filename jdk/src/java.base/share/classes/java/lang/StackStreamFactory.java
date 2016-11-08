@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -71,6 +71,7 @@ final class StackStreamFactory {
     // These flags must match the values maintained in the VM
     @Native private static final int DEFAULT_MODE              = 0x0;
     @Native private static final int FILL_CLASS_REFS_ONLY      = 0x2;
+    @Native private static final int GET_CALLER_CLASS          = 0x4;
     @Native private static final int SHOW_HIDDEN_FRAMES        = 0x20;  // LambdaForms are hidden by the VM
     @Native private static final int FILL_LIVE_STACK_FRAMES    = 0x100;
     /*
@@ -614,9 +615,7 @@ final class StackStreamFactory {
         private Class<?> caller;
 
         CallerClassFinder(StackWalker walker) {
-            super(walker, FILL_CLASS_REFS_ONLY);
-            assert (mode & FILL_CLASS_REFS_ONLY) == FILL_CLASS_REFS_ONLY
-                   : "mode should contain FILL_CLASS_REFS_ONLY";
+            super(walker, FILL_CLASS_REFS_ONLY|GET_CALLER_CLASS);
         }
 
         final class ClassBuffer extends FrameBuffer<Class<?>> {
@@ -680,7 +679,8 @@ final class StackStreamFactory {
             // 1: caller-sensitive method
             // 2: caller class
             while (n < 2 && (caller = nextFrame()) != null) {
-                if (isMethodHandleFrame(caller)) continue;
+                if (isMethodHandleFrame(caller)) { continue; }
+                if (isReflectionFrame(caller)) { continue; }
                 frames[n++] = caller;
             }
             if (frames[1] == null) {

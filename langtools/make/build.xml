@@ -88,18 +88,18 @@
         <dirset dir="${src.dir}" includes="*.*"/>
     </pathconvert>
 
-    <pathconvert property="xpatch.rest" pathsep=" -Xpatch:">
+    <pathconvert property="xpatch.rest" pathsep=" --patch-module=">
         <regexpmapper from="${file.separator}([^${file.separator}]+)$" to='\1="${build.modules}${file.separator}\1"' />
         <dirset dir="${src.dir}" includes="*.*"/>
     </pathconvert>
 
-    <pathconvert property="xpatch.noquotes.rest" pathsep=" -Xpatch:">
+    <pathconvert property="xpatch.noquotes.rest" pathsep=" --patch-module=">
         <regexpmapper from="${file.separator}([^${file.separator}]+)$" to="\1=${build.modules}${file.separator}\1" />
         <dirset dir="${src.dir}" includes="*.*"/>
     </pathconvert>
 
-    <property name="xpatch.cmd" value="-Xpatch:${xpatch.rest}"/>
-    <property name="xpatch.noquotes.cmd" value="-Xpatch:${xpatch.noquotes.rest}"/>
+    <property name="xpatch.cmd" value="--patch-module=${xpatch.rest}"/>
+    <property name="xpatch.noquotes.cmd" value="--patch-module=${xpatch.noquotes.rest}"/>
 
     <!-- java.marker is set to a marker file to check for within a Java install dir.
          The best file to check for across Solaris/Linux/Windows/MacOS is one of the
@@ -207,7 +207,7 @@
             <arg line="-source ${javac.source} -target ${javac.target}" />
             <arg value="-d" />
             <arg value="${build.modules}" />
-            <arg line="${javac.opts} -modulesourcepath ${src.dir}${file.separator}*${file.separator}share${file.separator}classes:${build.gensrc} -m ${modules.names}" />
+            <arg line="${javac.opts} --module-source-path ${src.dir}${file.separator}*${file.separator}share${file.separator}classes:${build.gensrc} -m ${modules.names}" />
         </exec>
         <delete>
             <fileset dir="${build.modules}" includes="**/module-info.class"/>
@@ -235,7 +235,10 @@
     <target name="idea" depends="-check-langtools.jdk.home">
         <mkdir dir=".idea"/>
         <copy todir=".idea" >
-            <fileset dir="make/intellij" excludes="**/src/**"/>
+            <fileset dir="make/intellij">
+               <exclude name="**/src/**"/>
+               <exclude name="**/utils/**"/>
+            </fileset>
         </copy>
         <condition property="idea.jtreg.home" value="${jtreg.home}" else = "[jtreg.home]">
             <isset property="jtreg.home"/>
@@ -243,10 +246,12 @@
         <condition property="idea.target.jdk" value="${langtools.jdk.home}" else = "$JDKPath$">
             <isset property="langtools.jdk.home"/>
         </condition>
-        <replace file=".idea/ant.xml" token="@IDEA_JTREG_HOME@" value="${idea.jtreg.home}"/>
         <replace file=".idea/ant.xml" token="@IDEA_TARGET_JDK@" value="${idea.target.jdk}"/>
         <replace dir=".idea/runConfigurations" token="@IDEA_TARGET_JDK@" value="${idea.target.jdk}"/>
         <replace dir=".idea/runConfigurations" token="@XPATCH@" value="${xpatch.cmd}"/>
+        <replace file=".idea/misc.xml" token="@IDEA_JTREG_HOME@" value="${idea.jtreg.home}"/>
+        <replace file=".idea/misc.xml" token="@IDEA_TARGET_JDK@" value="${idea.target.jdk}"/>
+        <replace file=".idea/misc.xml" token="@XPATCH@" value="${xpatch.cmd}"/>
         <mkdir dir=".idea/classes"/>
         <javac source="${javac.build.source}"
                target="${javac.build.target}"
@@ -270,7 +275,7 @@
                classpath="${ant.core.lib}"
                bootclasspath="${langtools.jdk.home}/jre/lib/rt.jar"
                includeantruntime="false">
-            <compilerarg line="${javac.opts} -XDstringConcat=inline"/>
+            <compilerarg line="${javac.build.opts} -XDstringConcat=inline"/>
         </javac>
         <taskdef name="pparse"
                  classname="anttasks.PropertiesParserTask"
@@ -286,7 +291,7 @@
                destdir="${build.dir}/toolclasses/"
                classpath="${ant.core.lib}"
                includeantruntime="false">
-            <compilerarg line="${javac.opts} -XDstringConcat=inline"/>
+            <compilerarg line="${javac.build.opts} -XDstringConcat=inline"/>
         </javac>
         <taskdef name="pcompile"
                  classname="anttasks.CompilePropertiesTask"

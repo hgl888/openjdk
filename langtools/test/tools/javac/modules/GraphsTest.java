@@ -73,6 +73,7 @@ public class GraphsTest extends ModuleTestBase {
     @Test
     public void diamond(Path base) throws Exception {
 
+        Path modSrc = Files.createDirectories(base.resolve("modSrc"));
         Path modules = Files.createDirectories(base.resolve("modules"));
 
         new ModuleBuilder(tb, "J")
@@ -94,19 +95,19 @@ public class GraphsTest extends ModuleTestBase {
                 .requiresPublic("J", jarModules)
                 .classes("package openO; public class O { openJ.J j; }")
                 .classes("package closedO; public class O { }")
-                .build(modules);
+                .build(modSrc, modules);
         new ModuleBuilder(tb, "N")
                 .requiresPublic("O", modules, jarModules)
                 .exports("openN")
                 .classes("package openN; public class N { }")
                 .classes("package closedN; public class N { }")
-                .build(modules);
+                .build(modSrc, modules);
         new ModuleBuilder(tb, "L")
                 .requiresPublic("O", modules, jarModules)
                 .exports("openL")
                 .classes("package openL; public class L { }")
                 .classes("package closedL; public class L { }")
-                .build(modules);
+                .build(modSrc, modules);
         ModuleBuilder m = new ModuleBuilder(tb, "M");
         //positive case
         Path positiveSrc = m
@@ -116,7 +117,7 @@ public class GraphsTest extends ModuleTestBase {
                 .write(base.resolve("positiveSrc"));
 
         new JavacTask(tb)
-                .options("-XDrawDiagnostics", "-mp", modules + File.pathSeparator + jarModules)
+                .options("-XDrawDiagnostics", "-p", modules + File.pathSeparator + jarModules)
                 .outdir(Files.createDirectories(base.resolve("positive")))
                 .files(findJavaFiles(positiveSrc))
                 .run()
@@ -125,7 +126,7 @@ public class GraphsTest extends ModuleTestBase {
         Path negativeSrc = m.classes("package p; public class Negative { closedO.O o; closedN.N n; closedL.L l; }")
                 .write(base.resolve("negativeSrc"));
         List<String> log = new JavacTask(tb)
-                .options("-XDrawDiagnostics", "-mp", modules + File.pathSeparator + jarModules)
+                .options("-XDrawDiagnostics", "-p", modules + File.pathSeparator + jarModules)
                 .outdir(Files.createDirectories(base.resolve("negative")))
                 .files(findJavaFiles(negativeSrc))
                 .run(Task.Expect.FAIL)
@@ -140,14 +141,14 @@ public class GraphsTest extends ModuleTestBase {
             throw new Exception("Expected output not found");
         }
         //multi module mode
-        m.write(modules);
+        m.write(modSrc);
         List<String> out = new JavacTask(tb)
                 .options("-XDrawDiagnostics",
-                        "-modulesourcepath", modules + "/*/src",
-                        "-mp", jarModules.toString()
+                        "--module-source-path", modSrc.toString(),
+                        "-p", jarModules.toString()
                 )
                 .outdir(Files.createDirectories(base.resolve("negative")))
-                .files(findJavaFiles(modules))
+                .files(findJavaFiles(modSrc))
                 .run(Task.Expect.FAIL)
                 .writeAll()
                 .getOutputLines(Task.OutputKind.DIRECT);
@@ -179,23 +180,23 @@ public class GraphsTest extends ModuleTestBase {
     */
     @Test
     public void reexportOfQualifiedExport(Path base) throws Exception {
-        Path modules = base.resolve("modules");
+        Path modSrc = base.resolve("modSrc");
         new ModuleBuilder(tb, "M")
                 .requiresPublic("N")
-                .write(modules);
+                .write(modSrc);
         new ModuleBuilder(tb, "N")
                 .exportsTo("pack", "M")
                 .classes("package pack; public class Clazz { }")
-                .write(modules);
+                .write(modSrc);
         new ModuleBuilder(tb, "L")
                 .requires("M")
                 .classes("package p; public class A { A(pack.Clazz cl){} } ")
-                .write(modules);
+                .write(modSrc);
         String log = new JavacTask(tb)
                 .options("-XDrawDiagnostics",
-                        "-modulesourcepath", modules + "/*/src")
+                        "--module-source-path", modSrc.toString())
                 .outdir(Files.createDirectories(base.resolve("negative")))
-                .files(findJavaFiles(modules))
+                .files(findJavaFiles(modSrc))
                 .run(Task.Expect.FAIL)
                 .writeAll()
                 .getOutput(Task.OutputKind.DIRECT);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2004, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,6 +23,7 @@
 
 /**
  * @test
+ * @key headful
  * @bug 4931668 7146533
  * @summary Tests XEmbed server/client functionality
  * @author Denis Mikhalkin: area=awt.xembed
@@ -72,10 +73,11 @@ public class RunTestXEmbed extends TestXEmbedServer {
                     enva[ind++] = "AWT_TOOLKIT=sun.awt.X11.XToolkit";
                 }
             }
-            Process proc = Runtime.getRuntime().exec(java_home +
-                                                     "/bin/java -XaddExports:java.desktop/sun.awt.X11=ALL-UNNAMED -Dawt.toolkit=sun.awt.X11.XToolkit TesterClient "
-                                                     + test.getName() + " " + window + buf,
-                                                     enva);
+            Process proc = Runtime.getRuntime().
+                exec(java_home +
+                     "/bin/java --add-exports java.desktop/sun.awt.X11=ALL-UNNAMED -Dawt.toolkit=sun.awt.X11.XToolkit TesterClient "
+                     + test.getName() + " " + window + buf,
+                     enva);
             System.err.println("Test for " + test.getName() + " has started.");
             log.fine("Test for " + test.getName() + " has started.");
             new InputReader(proc.getInputStream());

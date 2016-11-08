@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,14 +23,13 @@
 
 /**
  * @test
- * @requires (os.simpleArch == "x64" | os.simpleArch == "sparcv9" | os.simpleArch == "aarch64")
+ * @requires (vm.simpleArch == "x64" | vm.simpleArch == "sparcv9" | vm.simpleArch == "aarch64")
  * @library ../../../../../
  * @modules java.base/jdk.internal.reflect
  *          jdk.vm.ci/jdk.vm.ci.meta
  *          jdk.vm.ci/jdk.vm.ci.runtime
  *          jdk.vm.ci/jdk.vm.ci.common
  *          java.base/jdk.internal.misc
- * @build jdk.vm.ci.runtime.test.TestResolvedJavaType
  * @run junit/othervm -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI jdk.vm.ci.runtime.test.TestResolvedJavaType
  */
 
@@ -60,26 +59,41 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import org.junit.Test;
+
+import jdk.internal.reflect.ConstantPool;
 import jdk.vm.ci.common.JVMCIError;
 import jdk.vm.ci.meta.Assumptions.AssumptionResult;
 import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.JavaKind;
-import jdk.vm.ci.meta.ModifiersProvider;
 import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
-import jdk.vm.ci.meta.TrustedInterface;
-
-import org.junit.Test;
-
-import jdk.internal.reflect.ConstantPool;
 
 /**
  * Tests for {@link ResolvedJavaType}.
  */
+@SuppressWarnings("unchecked")
 public class TestResolvedJavaType extends TypeUniverse {
+    private static final Class<? extends Annotation> SIGNATURE_POLYMORPHIC_CLASS = findPolymorphicSignatureClass();
 
     public TestResolvedJavaType() {
+    }
+
+    private static Class<? extends Annotation> findPolymorphicSignatureClass() {
+        Class<? extends Annotation> signaturePolyAnnotation = null;
+        try {
+            for (Class<?> clazz : TestResolvedJavaType.class.getClassLoader().loadClass("java.lang.invoke.MethodHandle").getDeclaredClasses()) {
+                if (clazz.getName().endsWith("PolymorphicSignature") && Annotation.class.isAssignableFrom(clazz)) {
+                    signaturePolyAnnotation = (Class<? extends Annotation>) clazz;
+                    break;
+                }
+            }
+        } catch (Throwable e) {
+            throw new AssertionError("Could not find annotation PolymorphicSignature in java.lang.invoke.MethodHandle", e);
+        }
+        assertNotNull(signaturePolyAnnotation);
+        return signaturePolyAnnotation;
     }
 
     @Test
@@ -132,8 +146,9 @@ public class TestResolvedJavaType extends TypeUniverse {
     public void getModifiersTest() {
         for (Class<?> c : classes) {
             ResolvedJavaType type = metaAccess.lookupJavaType(c);
-            int expected = c.getModifiers() & ModifiersProvider.jvmClassModifiers();
-            int actual = type.getModifiers() & ModifiersProvider.jvmClassModifiers();
+            int mask = Modifier.classModifiers() & ~Modifier.STATIC;
+            int expected = c.getModifiers() & mask;
+            int actual = type.getModifiers() & mask;
             Class<?> elementalType = c;
             while (elementalType.isArray()) {
                 elementalType = elementalType.getComponentType();
@@ -180,34 +195,6 @@ public class TestResolvedJavaType extends TypeUniverse {
                         assertFalse(t.isInstance(c));
                     }
                 }
-            }
-        }
-    }
-
-    private static Class<?> asExactClass(Class<?> c) {
-        if (c.isArray()) {
-            if (asExactClass(c.getComponentType()) != null) {
-                return c;
-            }
-        } else {
-            if (c.isPrimitive() || Modifier.isFinal(c.getModifiers())) {
-                return c;
-            }
-        }
-        return null;
-    }
-
-    @Test
-    public void asExactTypeTest() {
-        for (Class<?> c : classes) {
-            ResolvedJavaType type = metaAccess.lookupJavaType(c);
-            ResolvedJavaType exactType = type.asExactType();
-            Class<?> expected = asExactClass(c);
-            if (expected == null) {
-                assertTrue("exact(" + c.getName() + ") != null", exactType == null);
-            } else {
-                assertNotNull(exactType);
-                assertTrue(exactType.equals(metaAccess.lookupJavaType(expected)));
             }
         }
     }
@@ -329,6 +316,7 @@ public class TestResolvedJavaType extends TypeUniverse {
             } else {
                 assertTrue(leafConcreteSubtype.getResult().equals(expected));
             }
+            assertTrue(!type.isLeaf() || leafConcreteSubtype.isAssumptionFree());
         }
 
         if (!type.isArray()) {
@@ -373,8 +361,10 @@ public class TestResolvedJavaType extends TypeUniverse {
 
         ResolvedJavaType a1a = metaAccess.lookupJavaType(Abstract1[].class);
         checkConcreteSubtype(a1a, null);
+        ResolvedJavaType i1a = metaAccess.lookupJavaType(Interface1[].class);
+        checkConcreteSubtype(i1a, null);
         ResolvedJavaType c1a = metaAccess.lookupJavaType(Concrete1[].class);
-        checkConcreteSubtype(c1a, null);
+        checkConcreteSubtype(c1a, c1a);
         ResolvedJavaType f1a = metaAccess.lookupJavaType(Final1[].class);
         checkConcreteSubtype(f1a, f1a);
 
@@ -605,8 +595,14 @@ public class TestResolvedJavaType extends TypeUniverse {
                     for (Method decl : decls) {
                         ResolvedJavaMethod m = metaAccess.lookupJavaMethod(decl);
                         if (m.isPublic()) {
-                            ResolvedJavaMethod i = metaAccess.lookupJavaMethod(impl);
-                            assertEquals(m.toString(), i, type.resolveMethod(m, context));
+                            ResolvedJavaMethod resolvedmethod = type.resolveMethod(m, context);
+                            if (isSignaturePolymorphic(m)) {
+                                // Signature polymorphic methods must not be resolved
+                                assertNull(resolvedmethod);
+                            } else {
+                                ResolvedJavaMethod i = metaAccess.lookupJavaMethod(impl);
+                                assertEquals(m.toString(), i, resolvedmethod);
+                            }
                         }
                     }
                 }
@@ -634,8 +630,14 @@ public class TestResolvedJavaType extends TypeUniverse {
                     for (Method decl : decls) {
                         ResolvedJavaMethod m = metaAccess.lookupJavaMethod(decl);
                         if (m.isPublic()) {
-                            ResolvedJavaMethod i = metaAccess.lookupJavaMethod(impl);
-                            assertEquals(i, type.resolveConcreteMethod(m, context));
+                            ResolvedJavaMethod resolvedMethod = type.resolveConcreteMethod(m, context);
+                            if (isSignaturePolymorphic(m)) {
+                                // Signature polymorphic methods must not be resolved
+                                assertNull(String.format("Got: %s", resolvedMethod), resolvedMethod);
+                            } else {
+                                ResolvedJavaMethod i = metaAccess.lookupJavaMethod(impl);
+                                assertEquals(i, resolvedMethod);
+                            }
                         }
                     }
                 }
@@ -842,16 +844,6 @@ public class TestResolvedJavaType extends TypeUniverse {
     }
 
     @Test
-    public void isTrustedInterfaceTypeTest() {
-        for (Class<?> c : classes) {
-            ResolvedJavaType type = metaAccess.lookupJavaType(c);
-            if (TrustedInterface.class.isAssignableFrom(c)) {
-                assertTrue(type.isTrustedInterfaceType());
-            }
-        }
-    }
-
-    @Test
     public void isLeafTest() {
         for (Class<?> c : classes) {
             ResolvedJavaType type = metaAccess.lookupJavaType(c);
@@ -966,5 +958,9 @@ public class TestResolvedJavaType extends TypeUniverse {
                 assertFalse("test should be removed from untestedApiMethods" + m, known.contains(m.getName()));
             }
         }
+    }
+
+    private static boolean isSignaturePolymorphic(ResolvedJavaMethod method) {
+        return method.getAnnotation(SIGNATURE_POLYMORPHIC_CLASS) != null;
     }
 }

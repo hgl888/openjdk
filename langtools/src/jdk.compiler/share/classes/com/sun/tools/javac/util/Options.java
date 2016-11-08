@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2011, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,6 +26,7 @@
 package com.sun.tools.javac.util;
 
 import java.util.*;
+
 import com.sun.tools.javac.main.Option;
 import static com.sun.tools.javac.main.Option.*;
 
@@ -71,7 +72,7 @@ public class Options {
      * Get the value for an option.
      */
     public String get(Option option) {
-        return values.get(option.text);
+        return values.get(option.primaryName);
     }
 
     /**
@@ -101,14 +102,26 @@ public class Options {
      * Check if the value for an option has been set.
      */
     public boolean isSet(Option option) {
-        return (values.get(option.text) != null);
+        return (values.get(option.primaryName) != null);
     }
 
     /**
      * Check if the value for a choice option has been set to a specific value.
      */
     public boolean isSet(Option option, String value) {
-        return (values.get(option.text + value) != null);
+        return (values.get(option.primaryName + value) != null);
+    }
+
+    /** Check if the value for a lint option has been explicitly set, either with -Xlint:opt
+     *  or if all lint options have enabled and this one not disabled with -Xlint:-opt.
+     */
+    public boolean isLintSet(String s) {
+        // return true if either the specific option is enabled, or
+        // they are all enabled without the specific one being
+        // disabled
+        return
+            isSet(XLINT_CUSTOM, s) ||
+            (isSet(XLINT) || isSet(XLINT_CUSTOM, "all")) && isUnset(XLINT_CUSTOM, "-" + s);
     }
 
     /**
@@ -122,14 +135,14 @@ public class Options {
      * Check if the value for an option has not been set.
      */
     public boolean isUnset(Option option) {
-        return (values.get(option.text) == null);
+        return (values.get(option.primaryName) == null);
     }
 
     /**
      * Check if the value for a choice option has not been set to a specific value.
      */
     public boolean isUnset(Option option, String value) {
-        return (values.get(option.text + value) == null);
+        return (values.get(option.primaryName + value) == null);
     }
 
     public void put(String name, String value) {
@@ -137,7 +150,7 @@ public class Options {
     }
 
     public void put(Option option, String value) {
-        values.put(option.text, value);
+        values.put(option.primaryName, value);
     }
 
     public void putAll(Options options) {
@@ -167,16 +180,5 @@ public class Options {
     public void notifyListeners() {
         for (Runnable r: listeners)
             r.run();
-    }
-
-    /** Check for a lint suboption. */
-    public boolean lint(String s) {
-        // return true if either the specific option is enabled, or
-        // they are all enabled without the specific one being
-        // disabled
-        return
-            isSet(XLINT_CUSTOM, s) ||
-            (isSet(XLINT) || isSet(XLINT_CUSTOM, "all")) &&
-                isUnset(XLINT_CUSTOM, "-" + s);
     }
 }

@@ -341,6 +341,27 @@ address TemplateInterpreterGenerator::generate_math_entry(AbstractInterpreter::M
   //        [ lo(arg) ]
   //        [ hi(arg) ]
   //
+  if (kind == Interpreter::java_lang_math_fmaD) {
+    __ movdbl(xmm2, Address(rsp, 5 * wordSize));
+    __ movdbl(xmm1, Address(rsp, 3 * wordSize));
+    __ movdbl(xmm0, Address(rsp, 1 * wordSize));
+    __ fmad(xmm0, xmm1, xmm2, xmm0);
+    __ pop(rdi);                               // get return address
+    __ mov(rsp, rsi);                          // set sp to sender sp
+    __ jmp(rdi);
+
+    return entry_point;
+  } else if (kind == Interpreter::java_lang_math_fmaF) {
+    __ movflt(xmm2, Address(rsp, 3 * wordSize));
+    __ movflt(xmm1, Address(rsp, 2 * wordSize));
+    __ movflt(xmm0, Address(rsp, 1 * wordSize));
+    __ fmaf(xmm0, xmm1, xmm2, xmm0);
+    __ pop(rdi);                               // get return address
+    __ mov(rsp, rsi);                          // set sp to sender sp
+    __ jmp(rdi);
+
+    return entry_point;
+ }
 
   __ fld_d(Address(rsp, 1*wordSize));
   switch (kind) {
@@ -350,7 +371,7 @@ address TemplateInterpreterGenerator::generate_math_entry(AbstractInterpreter::M
         if (VM_Version::supports_sse2() && StubRoutines::dsin() != NULL) {
           __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, StubRoutines::dsin())));
         } else {
-          __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, SharedRuntime::dsin)));
+          __ call_VM_leaf0(CAST_FROM_FN_PTR(address, SharedRuntime::dsin));
         }
         __ addptr(rsp, 2 * wordSize);
         break;
@@ -360,7 +381,7 @@ address TemplateInterpreterGenerator::generate_math_entry(AbstractInterpreter::M
         if (VM_Version::supports_sse2() && StubRoutines::dcos() != NULL) {
           __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, StubRoutines::dcos())));
         } else {
-          __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, SharedRuntime::dcos)));
+          __ call_VM_leaf0(CAST_FROM_FN_PTR(address, SharedRuntime::dcos));
         }
         __ addptr(rsp, 2 * wordSize);
         break;
@@ -370,7 +391,7 @@ address TemplateInterpreterGenerator::generate_math_entry(AbstractInterpreter::M
         if (StubRoutines::dtan() != NULL) {
           __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, StubRoutines::dtan())));
         } else {
-          __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, SharedRuntime::dtan)));
+          __ call_VM_leaf0(CAST_FROM_FN_PTR(address, SharedRuntime::dtan));
         }
         __ addptr(rsp, 2 * wordSize);
         break;
@@ -386,7 +407,7 @@ address TemplateInterpreterGenerator::generate_math_entry(AbstractInterpreter::M
         if (StubRoutines::dlog() != NULL) {
           __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, StubRoutines::dlog())));
         } else {
-          __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, SharedRuntime::dlog)));
+          __ call_VM_leaf0(CAST_FROM_FN_PTR(address, SharedRuntime::dlog));
         }
         __ addptr(rsp, 2 * wordSize);
         break;
@@ -396,7 +417,7 @@ address TemplateInterpreterGenerator::generate_math_entry(AbstractInterpreter::M
         if (StubRoutines::dlog10() != NULL) {
           __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, StubRoutines::dlog10())));
         } else {
-          __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, SharedRuntime::dlog10)));
+          __ call_VM_leaf0(CAST_FROM_FN_PTR(address, SharedRuntime::dlog10));
         }
         __ addptr(rsp, 2 * wordSize);
         break;
@@ -408,7 +429,7 @@ address TemplateInterpreterGenerator::generate_math_entry(AbstractInterpreter::M
       if (StubRoutines::dpow() != NULL) {
         __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, StubRoutines::dpow())));
       } else {
-        __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, SharedRuntime::dpow)));
+        __ call_VM_leaf0(CAST_FROM_FN_PTR(address, SharedRuntime::dpow));
       }
       __ addptr(rsp, 4 * wordSize);
       break;
@@ -418,7 +439,7 @@ address TemplateInterpreterGenerator::generate_math_entry(AbstractInterpreter::M
       if (StubRoutines::dexp() != NULL) {
         __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, StubRoutines::dexp())));
       } else {
-        __ call(RuntimeAddress(CAST_FROM_FN_PTR(address, SharedRuntime::dexp)));
+        __ call_VM_leaf0(CAST_FROM_FN_PTR(address, SharedRuntime::dexp));
       }
       __ addptr(rsp, 2*wordSize);
     break;

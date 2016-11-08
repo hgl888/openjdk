@@ -26,36 +26,10 @@
 #define SHARE_VM_C1_C1_GLOBALS_HPP
 
 #include "runtime/globals.hpp"
-#ifdef TARGET_ARCH_x86
-# include "c1_globals_x86.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "c1_globals_sparc.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "c1_globals_arm.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "c1_globals_ppc.hpp"
-#endif
-#ifdef TARGET_ARCH_aarch64
-# include "c1_globals_aarch64.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_linux
-# include "c1_globals_linux.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_solaris
-# include "c1_globals_solaris.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_windows
-# include "c1_globals_windows.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_aix
-# include "c1_globals_aix.hpp"
-#endif
-#ifdef TARGET_OS_FAMILY_bsd
-# include "c1_globals_bsd.hpp"
-#endif
+#include "utilities/macros.hpp"
+
+#include CPU_HEADER(c1_globals)
+#include OS_HEADER(c1_globals)
 
 //
 // Defines all global flags used by the client compiler.
@@ -65,6 +39,7 @@
                  product, \
                  product_pd, \
                  diagnostic, \
+                 diagnostic_pd, \
                  notproduct, \
                  range, \
                  constraint, \
@@ -356,6 +331,7 @@ C1_FLAGS(DECLARE_DEVELOPER_FLAG, \
          DECLARE_PRODUCT_FLAG, \
          DECLARE_PD_PRODUCT_FLAG, \
          DECLARE_DIAGNOSTIC_FLAG, \
+         DECLARE_PD_DIAGNOSTIC_FLAG, \
          DECLARE_NOTPRODUCT_FLAG, \
          IGNORE_RANGE, \
          IGNORE_CONSTRAINT, \

@@ -259,6 +259,7 @@ class MacroAssembler: public Assembler {
   void super_call_VM(Register oop_result, Register last_java_sp, address entry_point, Register arg_1, Register arg_2, Register arg_3, bool check_exceptions = true);
   void super_call_VM(Register oop_result, Register last_java_sp, address entry_point, Register arg_1, Register arg_2, Register arg_3, Register arg_4, bool check_exceptions = true);
 
+  void call_VM_leaf0(address entry_point);
   void call_VM_leaf(address entry_point,
                     int number_of_arguments = 0);
   void call_VM_leaf(address entry_point,
@@ -287,10 +288,10 @@ class MacroAssembler: public Assembler {
                            Register last_java_fp,
                            address last_java_pc);
 
-  void reset_last_Java_frame(Register thread, bool clear_fp, bool clear_pc);
+  void reset_last_Java_frame(Register thread, bool clear_fp);
 
   // thread in the default location (r15_thread on 64bit)
-  void reset_last_Java_frame(bool clear_fp, bool clear_pc);
+  void reset_last_Java_frame(bool clear_fp);
 
   // Stores
   void store_check(Register obj);                // store check for obj - register is destroyed afterwards
@@ -448,19 +449,14 @@ class MacroAssembler: public Assembler {
   // tmp is a temporary register, if none is available use noreg
   void fremr(Register tmp);
 
+  // dst = c = a * b + c
+  void fmad(XMMRegister dst, XMMRegister a, XMMRegister b, XMMRegister c);
+  void fmaf(XMMRegister dst, XMMRegister a, XMMRegister b, XMMRegister c);
+
 
   // same as fcmp2int, but using SSE2
   void cmpss2int(XMMRegister opr1, XMMRegister opr2, Register dst, bool unordered_is_less);
   void cmpsd2int(XMMRegister opr1, XMMRegister opr2, Register dst, bool unordered_is_less);
-
-  // Inlined sin/cos generator for Java; must not use CPU instruction
-  // directly on Intel as it does not have high enough precision
-  // outside of the range [-pi/4, pi/4]. Extra argument indicate the
-  // number of FPU stack slots in use; all but the topmost will
-  // require saving if a slow case is necessary. Assumes argument is
-  // on FP TOS; result is on FP TOS.  No cpu registers are changed by
-  // this code.
-  void trigfunc(char trig, int num_fpu_regs_in_use = 1);
 
   // branch to L if FPU flag C2 is set/not set
   // tmp is a temporary register, if none is available use noreg
@@ -1035,9 +1031,6 @@ class MacroAssembler: public Assembler {
   void restore_precision();
 
 private:
-
-  // call runtime as a fallback for trig functions and pow/exp.
-  void fp_runtime_fallback(address runtime_entry, int nb_args, int num_fpu_regs_in_use);
 
   // these are private because users should be doing movflt/movdbl
 

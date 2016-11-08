@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,7 @@
 /*
  * COPYRIGHT AND PERMISSION NOTICE
  *
- * Copyright (C) 1991-2015 Unicode, Inc. All rights reserved.
+ * Copyright (C) 1991-2016 Unicode, Inc. All rights reserved.
  * Distributed under the Terms of Use in
  * http://www.unicode.org/copyright.html.
  *
@@ -72,15 +72,84 @@ import sun.util.resources.OpenListResourceBundle;
 public class JavaTimeSupplementary_cs extends OpenListResourceBundle {
     @Override
     protected final Object[][] getContents() {
+        final String[] sharedQuarterNames = {
+            "1. \u010dtvrtlet\u00ed",
+            "2. \u010dtvrtlet\u00ed",
+            "3. \u010dtvrtlet\u00ed",
+            "4. \u010dtvrtlet\u00ed",
+        };
+
+        final String[] sharedAmPmMarkers = {
+            "dop.",
+            "odp.",
+        };
+
+        final String[] sharedDatePatterns = {
+            "EEEE d. MMMM y GGGG",
+            "d. MMMM y GGGG",
+            "d. M. y GGGG",
+            "dd.MM.yy G",
+        };
+
+        final String[] sharedDayAbbreviations = {
+            "ne",
+            "po",
+            "\u00fat",
+            "st",
+            "\u010dt",
+            "p\u00e1",
+            "so",
+        };
+
+        final String[] sharedDayNames = {
+            "ned\u011ble",
+            "pond\u011bl\u00ed",
+            "\u00fater\u00fd",
+            "st\u0159eda",
+            "\u010dtvrtek",
+            "p\u00e1tek",
+            "sobota",
+        };
+
+        final String[] sharedDayNarrows = {
+            "N",
+            "P",
+            "\u00da",
+            "S",
+            "\u010c",
+            "P",
+            "S",
+        };
+
+        final String[] sharedQuarterAbbreviations = {
+            "Q1",
+            "Q2",
+            "Q3",
+            "Q4",
+        };
+
+        final String[] sharedTimePatterns = {
+            "H:mm:ss zzzz",
+            "H:mm:ss z",
+            "H:mm:ss",
+            "H:mm",
+        };
+
+        final String[] sharedJavaTimeDatePatterns = {
+            "EEEE d. MMMM y G",
+            "d. MMMM y G",
+            "d. M. y G",
+            "dd.MM.yy GGGGG",
+        };
+
+        final String[] sharedEras = {
+            "P\u0159ed R. O. C.",
+            "",
+        };
+
         return new Object[][] {
             { "QuarterNames",
-                new String[] {
-                    "1. \u010dtvrtlet\u00ed",
-                    "2. \u010dtvrtlet\u00ed",
-                    "3. \u010dtvrtlet\u00ed",
-                    "4. \u010dtvrtlet\u00ed",
-                }
-            },
+                sharedQuarterNames },
             { "calendarname.buddhist",
                 "Buddhistick\u00fd kalend\u00e1\u0159" },
             { "calendarname.gregorian",
@@ -96,148 +165,47 @@ public class JavaTimeSupplementary_cs extends OpenListResourceBundle {
             { "calendarname.roc",
                 "Kalend\u00e1\u0159 \u010c\u00ednsk\u00e9 republiky" },
             { "field.dayperiod",
-                "dop./odp." },
+                "\u010d\u00e1st dne" },
             { "field.era",
-                "Letopo\u010det" },
+                "letopo\u010det" },
             { "field.hour",
-                "Hodina" },
+                "hodina" },
             { "field.minute",
-                "Minuta" },
+                "minuta" },
             { "field.month",
-                "M\u011bs\u00edc" },
+                "m\u011bs\u00edc" },
             { "field.second",
-                "Sekunda" },
+                "sekunda" },
             { "field.week",
-                "T\u00fdden" },
+                "t\u00fdden" },
             { "field.weekday",
-                "Den v t\u00fddnu" },
+                "den v t\u00fddnu" },
             { "field.year",
-                "Rok" },
+                "rok" },
             { "field.zone",
-                "\u010casov\u00e9 p\u00e1smo" },
+                "\u010dasov\u00e9 p\u00e1smo" },
             { "islamic.AmPmMarkers",
-                new String[] {
-                    "dopoledne",
-                    "odpoledne",
-                }
-            },
+                sharedAmPmMarkers },
             { "islamic.DatePatterns",
-                new String[] {
-                    "EEEE d. MMMM y GGGG",
-                    "d. MMMM y GGGG",
-                    "d. M. y GGGG",
-                    "dd.MM.yy G",
-                }
-            },
+                sharedDatePatterns },
             { "islamic.DayAbbreviations",
-                new String[] {
-                    "ne",
-                    "po",
-                    "\u00fat",
-                    "st",
-                    "\u010dt",
-                    "p\u00e1",
-                    "so",
-                }
-            },
+                sharedDayAbbreviations },
             { "islamic.DayNames",
-                new String[] {
-                    "ned\u011ble",
-                    "pond\u011bl\u00ed",
-                    "\u00fater\u00fd",
-                    "st\u0159eda",
-                    "\u010dtvrtek",
-                    "p\u00e1tek",
-                    "sobota",
-                }
-            },
+                sharedDayNames },
             { "islamic.DayNarrows",
-                new String[] {
-                    "N",
-                    "P",
-                    "\u00da",
-                    "S",
-                    "\u010c",
-                    "P",
-                    "S",
-                }
-            },
-            { "islamic.Eras",
-                new String[] {
-                    "",
-                    "AH",
-                }
-            },
+                sharedDayNarrows },
             { "islamic.QuarterAbbreviations",
-                new String[] {
-                    "Q1",
-                    "Q2",
-                    "Q3",
-                    "Q4",
-                }
-            },
+                sharedQuarterAbbreviations },
             { "islamic.QuarterNames",
-                new String[] {
-                    "1. \u010dtvrtlet\u00ed",
-                    "2. \u010dtvrtlet\u00ed",
-                    "3. \u010dtvrtlet\u00ed",
-                    "4. \u010dtvrtlet\u00ed",
-                }
-            },
-            { "islamic.QuarterNarrows",
-                new String[] {
-                    "1",
-                    "2",
-                    "3",
-                    "4",
-                }
-            },
+                sharedQuarterNames },
             { "islamic.TimePatterns",
-                new String[] {
-                    "H:mm:ss zzzz",
-                    "H:mm:ss z",
-                    "H:mm:ss",
-                    "H:mm",
-                }
-            },
-            { "islamic.long.Eras",
-                new String[] {
-                    "",
-                    "AH",
-                }
-            },
+                sharedTimePatterns },
+            { "islamic.abbreviated.AmPmMarkers",
+                sharedAmPmMarkers },
             { "islamic.narrow.AmPmMarkers",
-                new String[] {
-                    "dop.",
-                    "odp.",
-                }
-            },
-            { "islamic.narrow.Eras",
-                new String[] {
-                    "",
-                    "AH",
-                }
-            },
-            { "islamic.short.Eras",
-                new String[] {
-                    "",
-                    "AH",
-                }
-            },
+                sharedAmPmMarkers },
             { "java.time.buddhist.DatePatterns",
-                new String[] {
-                    "EEEE d. MMMM y G",
-                    "d. MMMM y G",
-                    "d. M. y G",
-                    "dd.MM.yy GGGGG",
-                }
-            },
-            { "java.time.buddhist.long.Eras",
-                new String[] {
-                    "BC",
-                    "BE",
-                }
-            },
+                sharedJavaTimeDatePatterns },
             { "java.time.buddhist.short.Eras",
                 new String[] {
                     "BC",
@@ -245,13 +213,7 @@ public class JavaTimeSupplementary_cs extends OpenListResourceBundle {
                 }
             },
             { "java.time.islamic.DatePatterns",
-                new String[] {
-                    "EEEE d. MMMM y G",
-                    "d. MMMM y G",
-                    "d. M. y G",
-                    "dd.MM.yy GGGGG",
-                }
-            },
+                sharedJavaTimeDatePatterns },
             { "java.time.japanese.DatePatterns",
                 new String[] {
                     "EEEE, d. MMMM y G",
@@ -267,13 +229,7 @@ public class JavaTimeSupplementary_cs extends OpenListResourceBundle {
                 }
             },
             { "java.time.roc.DatePatterns",
-                new String[] {
-                    "EEEE d. MMMM y G",
-                    "d. MMMM y G",
-                    "d. M. y G",
-                    "dd.MM.yy GGGGG",
-                }
-            },
+                sharedJavaTimeDatePatterns },
             { "java.time.short.Eras",
                 new String[] {
                     "p\u0159.Kr.",
@@ -281,58 +237,17 @@ public class JavaTimeSupplementary_cs extends OpenListResourceBundle {
                 }
             },
             { "roc.AmPmMarkers",
-                new String[] {
-                    "dopoledne",
-                    "odpoledne",
-                }
-            },
+                sharedAmPmMarkers },
             { "roc.DatePatterns",
-                new String[] {
-                    "EEEE d. MMMM y GGGG",
-                    "d. MMMM y GGGG",
-                    "d. M. y GGGG",
-                    "dd.MM.yy G",
-                }
-            },
+                sharedDatePatterns },
             { "roc.DayAbbreviations",
-                new String[] {
-                    "ne",
-                    "po",
-                    "\u00fat",
-                    "st",
-                    "\u010dt",
-                    "p\u00e1",
-                    "so",
-                }
-            },
+                sharedDayAbbreviations },
             { "roc.DayNames",
-                new String[] {
-                    "ned\u011ble",
-                    "pond\u011bl\u00ed",
-                    "\u00fater\u00fd",
-                    "st\u0159eda",
-                    "\u010dtvrtek",
-                    "p\u00e1tek",
-                    "sobota",
-                }
-            },
+                sharedDayNames },
             { "roc.DayNarrows",
-                new String[] {
-                    "N",
-                    "P",
-                    "\u00da",
-                    "S",
-                    "\u010c",
-                    "P",
-                    "S",
-                }
-            },
+                sharedDayNarrows },
             { "roc.Eras",
-                new String[] {
-                    "P\u0159ed R. O. C.",
-                    "",
-                }
-            },
+                sharedEras },
             { "roc.MonthAbbreviations",
                 new String[] {
                     "led",
@@ -367,71 +282,24 @@ public class JavaTimeSupplementary_cs extends OpenListResourceBundle {
                     "",
                 }
             },
-            { "roc.MonthNarrows",
-                new String[] {
-                    "1",
-                    "2",
-                    "3",
-                    "4",
-                    "5",
-                    "6",
-                    "7",
-                    "8",
-                    "9",
-                    "10",
-                    "11",
-                    "12",
-                    "",
-                }
-            },
             { "roc.QuarterAbbreviations",
-                new String[] {
-                    "Q1",
-                    "Q2",
-                    "Q3",
-                    "Q4",
-                }
-            },
+                sharedQuarterAbbreviations },
             { "roc.QuarterNames",
-                new String[] {
-                    "1. \u010dtvrtlet\u00ed",
-                    "2. \u010dtvrtlet\u00ed",
-                    "3. \u010dtvrtlet\u00ed",
-                    "4. \u010dtvrtlet\u00ed",
-                }
-            },
+                sharedQuarterNames },
             { "roc.TimePatterns",
-                new String[] {
-                    "H:mm:ss zzzz",
-                    "H:mm:ss z",
-                    "H:mm:ss",
-                    "H:mm",
-                }
-            },
+                sharedTimePatterns },
+            { "roc.abbreviated.AmPmMarkers",
+                sharedAmPmMarkers },
             { "roc.long.Eras",
-                new String[] {
-                    "P\u0159ed R. O. C.",
-                    "",
-                }
-            },
+                sharedEras },
             { "roc.narrow.AmPmMarkers",
-                new String[] {
-                    "dop.",
-                    "odp.",
-                }
-            },
+                sharedAmPmMarkers },
             { "roc.narrow.Eras",
-                new String[] {
-                    "P\u0159ed R. O. C.",
-                    "",
-                }
-            },
+                sharedEras },
             { "roc.short.Eras",
-                new String[] {
-                    "P\u0159ed R. O. C.",
-                    "",
-                }
-            },
+                sharedEras },
+            { "timezone.hourFormat",
+                "+H:mm;-H:mm" },
         };
     }
 }

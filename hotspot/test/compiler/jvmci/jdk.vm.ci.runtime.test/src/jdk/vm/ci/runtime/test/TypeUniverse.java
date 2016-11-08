@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,8 +22,14 @@
  */
 package jdk.vm.ci.runtime.test;
 
-import static java.lang.reflect.Modifier.isFinal;
-import static java.lang.reflect.Modifier.isStatic;
+import jdk.internal.misc.Unsafe;
+import jdk.vm.ci.meta.ConstantReflectionProvider;
+import jdk.vm.ci.meta.JavaConstant;
+import jdk.vm.ci.meta.MetaAccessProvider;
+import jdk.vm.ci.meta.ResolvedJavaField;
+import jdk.vm.ci.meta.ResolvedJavaType;
+import jdk.vm.ci.runtime.JVMCI;
+import org.junit.Test;
 
 import java.io.Serializable;
 import java.lang.reflect.Array;
@@ -47,19 +53,8 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 
-import jdk.vm.ci.meta.ConstantReflectionProvider;
-import jdk.vm.ci.meta.JavaConstant;
-import jdk.vm.ci.meta.MetaAccessProvider;
-import jdk.vm.ci.meta.ResolvedJavaField;
-import jdk.vm.ci.meta.ResolvedJavaType;
-import jdk.vm.ci.meta.TrustedInterface;
-import jdk.vm.ci.runtime.JVMCI;
-
-import org.junit.Test;
-
-import jdk.internal.misc.Unsafe;
-
-//JaCoCo Exclude
+import static java.lang.reflect.Modifier.isFinal;
+import static java.lang.reflect.Modifier.isStatic;
 
 /**
  * Context for type related tests.
@@ -116,8 +111,8 @@ public class TypeUniverse {
                         byte[].class, short[].class, char[].class, int[].class, float[].class, long[].class, double[].class, Object[].class, Class[].class, List[].class, boolean[][].class,
                         byte[][].class, short[][].class, char[][].class, int[][].class, float[][].class, long[][].class, double[][].class, Object[][].class, Class[][].class, List[][].class,
                         ClassLoader.class, String.class, Serializable.class, Cloneable.class, Test.class, TestMetaAccessProvider.class, List.class, Collection.class, Map.class, Queue.class,
-                        HashMap.class, LinkedHashMap.class, IdentityHashMap.class, AbstractCollection.class, AbstractList.class, ArrayList.class, TrustedInterface.class, InnerClass.class,
-                        InnerStaticClass.class, InnerStaticFinalClass.class, PrivateInnerClass.class, ProtectedInnerClass.class};
+                        HashMap.class, LinkedHashMap.class, IdentityHashMap.class, AbstractCollection.class, AbstractList.class, ArrayList.class, InnerClass.class, InnerStaticClass.class,
+                        InnerStaticFinalClass.class, PrivateInnerClass.class, ProtectedInnerClass.class};
         for (Class<?> c : initialClasses) {
             addClass(c);
         }
@@ -184,7 +179,7 @@ public class TypeUniverse {
                     if (boxed instanceof JavaConstant) {
                         res.add(new ConstantValue(javaField.format("%H.%n"), (JavaConstant) boxed, boxed));
                     } else {
-                        JavaConstant value = constantReflection.readConstantFieldValue(javaField, null);
+                        JavaConstant value = constantReflection.readFieldValue(javaField, null);
                         if (value != null) {
                             res.add(new ConstantValue(javaField.format("%H.%n"), value, boxed));
                             if (boxed instanceof Object[]) {

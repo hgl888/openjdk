@@ -21,7 +21,10 @@
  * questions.
  */
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintStream;
 import java.io.StringWriter;
 import java.lang.reflect.Method;
@@ -37,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -53,7 +57,6 @@ import jdk.jshell.ExpressionSnippet;
 import jdk.jshell.ImportSnippet;
 import jdk.jshell.Snippet.Kind;
 import jdk.jshell.MethodSnippet;
-import jdk.jshell.PersistentSnippet;
 import jdk.jshell.Snippet.Status;
 import jdk.jshell.Snippet.SubKind;
 import jdk.jshell.TypeDeclSnippet;
@@ -69,10 +72,11 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 
 import jdk.jshell.Diag;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
 import static jdk.jshell.Snippet.Status.*;
 import static org.testng.Assert.*;
 import static jdk.jshell.Snippet.SubKind.METHOD_SUBKIND;
-import jdk.jshell.spi.ExecutionControl;
 
 public class KullaTesting {
 
@@ -82,7 +86,7 @@ public class KullaTesting {
 
     private SourceCodeAnalysis analysis = null;
     private JShell state = null;
-    private TestingInputStream inStream = null;
+    private InputStream inStream = null;
     private ByteArrayOutputStream outStream = null;
     private ByteArrayOutputStream errStream = null;
 
@@ -105,7 +109,11 @@ public class KullaTesting {
     }
 
     public void setInput(String s) {
-        inStream.setInput(s);
+        setInput(new ByteArrayInputStream(s.getBytes()));
+    }
+
+    public void setInput(InputStream in) {
+        inStream = in;
     }
 
     public String getOutput() {
@@ -139,7 +147,7 @@ public class KullaTesting {
 
     public List<Snippet> getActiveKeys() {
         return allSnippets.stream()
-                .filter(k -> getState().status(k).isActive)
+                .filter(k -> getState().status(k).isActive())
                 .collect(Collectors.toList());
     }
 
@@ -154,29 +162,35 @@ public class KullaTesting {
 
     @BeforeMethod
     public void setUp() {
-        inStream = new TestingInputStream();
-        outStream = new ByteArrayOutputStream();
-        errStream = new ByteArrayOutputStream();
-        state = JShell.builder()
-                .in(inStream)
-                .out(new PrintStream(outStream))
-                .err(new PrintStream(errStream))
-                .build();
-        allSnippets = new LinkedHashSet<>();
-        idToSnippet = new LinkedHashMap<>();
-        classpath = new ArrayList<>();
+        setUp(b -> {});
     }
 
-    public void setUp(ExecutionControl ec) {
-        inStream = new TestingInputStream();
+    public void setUp(Consumer<JShell.Builder> bc) {
+        InputStream in = new InputStream() {
+            @Override
+            public int read() throws IOException {
+                assertNotNull(inStream);
+                return inStream.read();
+            }
+            @Override
+            public int read(byte[] b) throws IOException {
+                assertNotNull(inStream);
+                return inStream.read(b);
+            }
+            @Override
+            public int read(byte[] b, int off, int len) throws IOException {
+                assertNotNull(inStream);
+                return inStream.read(b, off, len);
+            }
+        };
         outStream = new ByteArrayOutputStream();
         errStream = new ByteArrayOutputStream();
-        state = JShell.builder()
-                .executionEngine(ec)
-                .in(inStream)
+        JShell.Builder builder = JShell.builder()
+                .in(in)
                 .out(new PrintStream(outStream))
-                .err(new PrintStream(errStream))
-                .build();
+                .err(new PrintStream(errStream));
+        bc.accept(builder);
+        state = builder.build();
         allSnippets = new LinkedHashSet<>();
         idToSnippet = new LinkedHashMap<>();
         classpath = new ArrayList<>();
@@ -193,7 +207,7 @@ public class KullaTesting {
     }
 
     public List<String> assertUnresolvedDependencies(DeclarationSnippet key, int unresolvedSize) {
-        List<String> unresolved = getState().unresolvedDependencies(key);
+        List<String> unresolved = getState().unresolvedDependencies(key).collect(toList());
         assertEquals(unresolved.size(), unresolvedSize, "Input: " + key.source() + ", checking unresolved: ");
         return unresolved;
     }
@@ -212,8 +226,8 @@ public class KullaTesting {
         SnippetEvent ste = events.get(0);
         DeclarationSnippet sn = ((UnresolvedReferenceException) ste.exception()).getSnippet();
         assertEquals(sn.name(), name, "Given input: " + input + ", checking name");
-        assertEquals(getState().unresolvedDependencies(sn).size(), unresolvedSize, "Given input: " + input + ", checking unresolved");
-        assertEquals(getState().diagnostics(sn).size(), diagnosticsSize, "Given input: " + input + ", checking diagnostics");
+        assertEquals(getState().unresolvedDependencies(sn).count(), unresolvedSize, "Given input: " + input + ", checking unresolved");
+        assertEquals(getState().diagnostics(sn).count(), (long) diagnosticsSize, "Given input: " + input + ", checking diagnostics");
         return sn;
     }
 
@@ -365,6 +379,12 @@ public class KullaTesting {
     public List<SnippetEvent> assertEval(String input,
            DiagCheck diagMain, DiagCheck diagUpdates, EventChain... eventChains) {
         return checkEvents(() -> getState().eval(input), "eval(" + input + ")", diagMain, diagUpdates, eventChains);
+    }
+
+    <T> void assertStreamMatch(Stream<T> result, T... expected) {
+        Set<T> sns = result.collect(toSet());
+        Set<T> exp = Stream.of(expected).collect(toSet());
+        assertEquals(sns, exp);
     }
 
     private Map<Snippet, Snippet> closure(List<SnippetEvent> events) {
@@ -556,7 +576,7 @@ public class KullaTesting {
                                     " got: " + main.exception().toString());
                 }
             }
-            List<Diag> diagnostics = getState().diagnostics(mainKey);
+            List<Diag> diagnostics = getState().diagnostics(mainKey).collect(toList());
             switch (diagMain) {
                 case DIAG_OK:
                     assertEquals(diagnostics.size(), 0, "Expected no diagnostics, got: " + diagnosticsToString(diagnostics));
@@ -570,7 +590,7 @@ public class KullaTesting {
             }
             if (eventChain.mainInfo != null) {
                 for (STEInfo ste : eventChain.updates) {
-                    diagnostics = getState().diagnostics(ste.snippet());
+                    diagnostics = getState().diagnostics(ste.snippet()).collect(toList());
                     switch (diagUpdates) {
                         case DIAG_OK:
                             assertEquals(diagnostics.size(), 0, "Expected no diagnostics, got: " + diagnosticsToString(diagnostics));
@@ -615,7 +635,7 @@ public class KullaTesting {
         return (ImportSnippet) key;
     }
 
-    private Snippet key(List<SnippetEvent> events) {
+    public Snippet key(List<SnippetEvent> events) {
         assertTrue(events.size() >= 1, "Expected at least one event, got none.");
         return events.get(0).snippet();
     }
@@ -647,7 +667,7 @@ public class KullaTesting {
         SnippetEvent e = events.get(0);
         Snippet key = e.snippet();
         assertEquals(getState().status(key), REJECTED);
-        List<Diag> diagnostics = getState().diagnostics(e.snippet());
+        List<Diag> diagnostics = getState().diagnostics(e.snippet()).collect(toList());
         assertTrue(diagnostics.size() > 0, "Expected diagnostics, got none");
         assertDiagnostic(input, diagnostics.get(0), expectedDiagnostic);
         assertTrue(key != null, "key must never be null, but it was for: " + input);
@@ -666,7 +686,7 @@ public class KullaTesting {
         List<SnippetEvent> events = assertEval(input, IGNORE_VALUE, null,
                 DiagCheck.DIAG_WARNING, DiagCheck.DIAG_IGNORE, mainInfo, updates);
         SnippetEvent e = events.get(0);
-        List<Diag> diagnostics = getState().diagnostics(e.snippet());
+        List<Diag> diagnostics = getState().diagnostics(e.snippet()).collect(toList());
         if (expectedDiagnostic != null) assertDiagnostic(input, diagnostics.get(0), expectedDiagnostic);
         return e.snippet();
     }
@@ -714,12 +734,12 @@ public class KullaTesting {
         String source = declarationKey.source();
         assertEquals(declarationKey.name(), expectedName,
                 "Expected " + source + " to have the name: " + expectedName + ", got: " + declarationKey.name());
-        List<String> unresolved = getState().unresolvedDependencies(declarationKey);
-        assertEquals(unresolved.size(), unressz, "Expected " + source + " to have " + unressz
-                + " unresolved symbols, got: " + unresolved.size());
-        List<Diag> otherCorralledErrors = getState().diagnostics(declarationKey);
-        assertEquals(otherCorralledErrors.size(), othersz, "Expected " + source + " to have " + othersz
-                + " other errors, got: " + otherCorralledErrors.size());
+        long unresolved = getState().unresolvedDependencies(declarationKey).count();
+        assertEquals(unresolved, unressz, "Expected " + source + " to have " + unressz
+                + " unresolved symbols, got: " + unresolved);
+        long otherCorralledErrorsCount = getState().diagnostics(declarationKey).count();
+        assertEquals(otherCorralledErrorsCount, othersz, "Expected " + source + " to have " + othersz
+                + " other errors, got: " + otherCorralledErrorsCount);
     }
 
     public void assertKey(Snippet key, Status expectedStatus, SubKind expectedSubKind) {
@@ -735,15 +755,15 @@ public class KullaTesting {
         assertEquals(expectedSubKind.kind(), expectedKind, "Checking kind: ");
     }
 
-    public void assertDrop(PersistentSnippet key, STEInfo mainInfo, STEInfo... updates) {
+    public void assertDrop(Snippet key, STEInfo mainInfo, STEInfo... updates) {
         assertDrop(key, DiagCheck.DIAG_OK, DiagCheck.DIAG_OK, mainInfo, updates);
     }
 
-    public void assertDrop(PersistentSnippet key, DiagCheck diagMain, DiagCheck diagUpdates, STEInfo mainInfo, STEInfo... updates) {
+    public void assertDrop(Snippet key, DiagCheck diagMain, DiagCheck diagUpdates, STEInfo mainInfo, STEInfo... updates) {
         assertDrop(key, diagMain, diagUpdates, new EventChain(mainInfo, null, null, updates));
     }
 
-    public void assertDrop(PersistentSnippet key, DiagCheck diagMain, DiagCheck diagUpdates, EventChain... eventChains) {
+    public void assertDrop(Snippet key, DiagCheck diagMain, DiagCheck diagUpdates, EventChain... eventChains) {
         checkEvents(() -> getState().drop(key), "drop(" + key + ")", diagMain, diagUpdates, eventChains);
     }
 
@@ -757,44 +777,33 @@ public class KullaTesting {
 
     public void assertAnalyze(String input, Completeness status, String source, String remaining, Boolean isComplete) {
         CompletionInfo ci = getAnalysis().analyzeCompletion(input);
-        if (status != null) assertEquals(ci.completeness, status, "Input : " + input + ", status: ");
-        if (source != null) assertEquals(ci.source, source, "Input : " + input + ", source: ");
-        if (remaining != null) assertEquals(ci.remaining, remaining, "Input : " + input + ", remaining: ");
+        if (status != null) assertEquals(ci.completeness(), status, "Input : " + input + ", status: ");
+        if (source != null) assertEquals(ci.source(), source, "Input : " + input + ", source: ");
+        if (remaining != null) assertEquals(ci.remaining(), remaining, "Input : " + input + ", remaining: ");
         if (isComplete != null) {
             boolean isExpectedComplete = isComplete;
-            assertEquals(ci.completeness.isComplete, isExpectedComplete, "Input : " + input + ", isComplete: ");
+            assertEquals(ci.completeness().isComplete(), isExpectedComplete, "Input : " + input + ", isComplete: ");
         }
     }
 
     public void assertNumberOfActiveVariables(int cnt) {
-        Collection<VarSnippet> variables = getState().variables();
-        assertEquals(variables.size(), cnt, "Variables : " + variables);
+        assertEquals(getState().variables().count(), cnt, "Variables : " + getState().variables().collect(toList()));
     }
 
     public void assertNumberOfActiveMethods(int cnt) {
-        Collection<MethodSnippet> methods = getState().methods();
-        assertEquals(methods.size(), cnt, "Methods : " + methods);
+        assertEquals(getState().methods().count(), cnt, "Methods : " + getState().methods().collect(toList()));
     }
 
     public void assertNumberOfActiveClasses(int cnt) {
-        Collection<TypeDeclSnippet> classes = getState().types();
-        assertEquals(classes.size(), cnt, "Classes : " + classes);
-    }
-
-    public void assertMembers(Collection<? extends Snippet> members, Set<MemberInfo> expected) {
-        assertEquals(members.size(), expected.size(), "Expected : " + expected + ", actual : " + members);
-        assertEquals(members.stream()
-                        .map(this::getMemberInfo)
-                        .collect(Collectors.toSet()),
-                expected);
+        assertEquals(getState().types().count(), cnt, "Types : " + getState().types().collect(toList()));
     }
 
     public void assertKeys(MemberInfo... expected) {
         int index = 0;
-        List<Snippet> snippets = getState().snippets();
+        List<Snippet> snippets = getState().snippets().collect(toList());
         assertEquals(allSnippets.size(), snippets.size());
         for (Snippet sn : snippets) {
-            if (sn.kind().isPersistent && getState().status(sn).isActive) {
+            if (sn.kind().isPersistent() && getState().status(sn).isActive()) {
                 MemberInfo actual = getMemberInfo(sn);
                 MemberInfo exp = expected[index];
                 assertEquals(actual, exp, String.format("Difference in #%d. Expected: %s, actual: %s",
@@ -811,39 +820,51 @@ public class KullaTesting {
 
     public void assertActiveKeys(Snippet... expected) {
         int index = 0;
-        for (Snippet key : getState().snippets()) {
-            if (state.status(key).isActive) {
+        for (Snippet key : getState().snippets().collect(toList())) {
+            if (state.status(key).isActive()) {
                 assertEquals(expected[index], key, String.format("Difference in #%d. Expected: %s, actual: %s", index, key, expected[index]));
                 ++index;
             }
         }
     }
 
-    private List<Snippet> filterDeclaredKeys(Predicate<Snippet> p) {
-        return getActiveKeys().stream()
+    private void assertActiveSnippets(Stream<? extends Snippet> snippets, Predicate<Snippet> p, String label) {
+        Set<Snippet> active = getActiveKeys().stream()
                 .filter(p)
-                .collect(Collectors.toList());
+                .collect(Collectors.toSet());
+        Set<Snippet> got = snippets
+                .collect(Collectors.toSet());
+        assertEquals(active, got, label);
     }
 
     public void assertVariables() {
-        assertEquals(getState().variables(), filterDeclaredKeys((key) -> key instanceof VarSnippet), "Variables");
+        assertActiveSnippets(getState().variables(), (key) -> key instanceof VarSnippet, "Variables");
     }
 
     public void assertMethods() {
-        assertEquals(getState().methods(), filterDeclaredKeys((key) -> key instanceof MethodSnippet), "Methods");
+        assertActiveSnippets(getState().methods(), (key) -> key instanceof MethodSnippet, "Methods");
     }
 
     public void assertClasses() {
-        assertEquals(getState().types(), filterDeclaredKeys((key) -> key instanceof TypeDeclSnippet), "Classes");
+        assertActiveSnippets(getState().types(), (key) -> key instanceof TypeDeclSnippet, "Classes");
+    }
+
+    public void assertMembers(Stream<? extends Snippet> members, MemberInfo...expectedInfos) {
+        Set<MemberInfo> expected = Stream.of(expectedInfos).collect(Collectors.toSet());
+        Set<MemberInfo> got = members
+                        .map(this::getMemberInfo)
+                        .collect(Collectors.toSet());
+        assertEquals(got.size(), expected.size(), "Expected : " + expected + ", actual : " + members);
+        assertEquals(got, expected);
     }
 
     public void assertVariables(MemberInfo...expected) {
-        assertMembers(getState().variables(), Stream.of(expected).collect(Collectors.toSet()));
+        assertMembers(getState().variables(), expected);
     }
 
     public void assertMethods(MemberInfo...expected) {
-        assertMembers(getState().methods(), Stream.of(expected).collect(Collectors.toSet()));
-        for (MethodSnippet methodKey : getState().methods()) {
+        assertMembers(getState().methods(), expected);
+        getState().methods().forEach(methodKey -> {
             MemberInfo expectedInfo = null;
             for (MemberInfo info : expected) {
                 if (info.name.equals(methodKey.name()) && info.type.equals(methodKey.signature())) {
@@ -853,11 +874,11 @@ public class KullaTesting {
             assertNotNull(expectedInfo, "Not found method: " + methodKey.name());
             int lastIndexOf = expectedInfo.type.lastIndexOf(')');
             assertEquals(methodKey.parameterTypes(), expectedInfo.type.substring(1, lastIndexOf), "Parameter types");
-        }
+        });
     }
 
     public void assertClasses(MemberInfo...expected) {
-        assertMembers(getState().types(), Stream.of(expected).collect(Collectors.toSet()));
+        assertMembers(getState().types(), expected);
     }
 
     public void assertCompletion(String code, String... expected) {
@@ -888,8 +909,8 @@ public class KullaTesting {
         List<Suggestion> completions =
                 getAnalysis().completionSuggestions(code, cursor, new int[1]); //XXX: ignoring anchor for now
         return completions.stream()
-                          .filter(s -> isSmart == null || isSmart == s.isSmart)
-                          .map(s -> s.continuation)
+                          .filter(s -> isSmart == null || isSmart == s.matchesType())
+                          .map(s -> s.continuation())
                           .distinct()
                           .collect(Collectors.toList());
     }
@@ -1071,7 +1092,7 @@ public class KullaTesting {
     }
 
     public static STEInfo added(Status status) {
-        return new STEInfo(MAIN_SNIPPET, NONEXISTENT, status, status.isDefined, null);
+        return new STEInfo(MAIN_SNIPPET, NONEXISTENT, status, status.isDefined(), null);
     }
 
     public static class EventChain {

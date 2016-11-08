@@ -39,16 +39,25 @@ import java.io.File;
 import java.io.InputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.io.UncheckedIOException;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.invoke.SwitchPoint;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.SoftReference;
+import java.lang.module.Configuration;
+import java.lang.module.ModuleDescriptor;
+import java.lang.module.ModuleFinder;
+import java.lang.module.ModuleReference;
 import java.lang.reflect.Field;
+import java.lang.reflect.Layer;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Module;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.AccessControlContext;
 import java.security.AccessController;
 import java.security.CodeSigner;
@@ -60,9 +69,12 @@ import java.security.PrivilegedExceptionAction;
 import java.security.ProtectionDomain;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -71,6 +83,8 @@ import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.logging.Level;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import javax.script.ScriptEngine;
 import jdk.dynalink.DynamicLinker;
 import jdk.internal.org.objectweb.asm.ClassReader;
@@ -337,7 +351,7 @@ public final class Context {
             return new NamedContextCodeInstaller(context, codeSource, context.createNewLoader());
         }
 
-        private static final byte[] getAnonymousHostClassBytes() {
+        private static byte[] getAnonymousHostClassBytes() {
             final ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
             cw.visit(V1_7, Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, ANONYMOUS_HOST_CLASS_NAME.replace('.', '/'), null, "java/lang/Object", null);
             cw.visitEnd();
@@ -374,6 +388,15 @@ public final class Context {
     // A factory for linking global properties as constant method handles. It is created when the first Global
     // is created, and invalidated forever once the second global is created.
     private final AtomicReference<GlobalConstants> globalConstantsRef = new AtomicReference<>();
+
+    // Are java.sql, java.sql.rowset modules found in the system?
+    static final boolean javaSqlFound, javaSqlRowsetFound;
+
+    static {
+        final Layer boot = Layer.boot();
+        javaSqlFound = boot.findModule("java.sql").isPresent();
+        javaSqlRowsetFound = boot.findModule("java.sql.rowset").isPresent();
+    }
 
     /**
      * Get the current global scope
@@ -471,6 +494,11 @@ public final class Context {
     /** class loader to resolve classes from script. */
     private final ClassLoader appLoader;
 
+    /*package-private*/
+    ClassLoader getAppLoader() {
+        return appLoader;
+    }
+
     /** Class loader to load classes compiled from scripts. */
     private final ScriptLoader scriptLoader;
 
@@ -486,13 +514,13 @@ public final class Context {
     /** Optional class filter to use for Java classes. Can be null. */
     private final ClassFilter classFilter;
 
-    private static final ClassLoader myLoader = Context.class.getClassLoader();
-    private static final StructureLoader sharedLoader;
+    /** Process-wide singleton structure loader */
+    private static final StructureLoader theStructLoader;
     private static final ConcurrentMap<String, Class<?>> structureClasses = new ConcurrentHashMap<>();
 
     /*package-private*/ @SuppressWarnings("static-method")
-    StructureLoader getSharedLoader() {
-        return sharedLoader;
+    StructureLoader getStructLoader() {
+        return theStructLoader;
     }
 
     private static AccessControlContext createNoPermAccCtxt() {
@@ -508,9 +536,11 @@ public final class Context {
     private static final AccessControlContext NO_PERMISSIONS_ACC_CTXT = createNoPermAccCtxt();
     private static final AccessControlContext CREATE_LOADER_ACC_CTXT  = createPermAccCtxt("createClassLoader");
     private static final AccessControlContext CREATE_GLOBAL_ACC_CTXT  = createPermAccCtxt(NASHORN_CREATE_GLOBAL);
+    private static final AccessControlContext GET_LOADER_ACC_CTXT     = createPermAccCtxt("getClassLoader");
 
     static {
-        sharedLoader = AccessController.doPrivileged(new PrivilegedAction<StructureLoader>() {
+        final ClassLoader myLoader = Context.class.getClassLoader();
+        theStructLoader = AccessController.doPrivileged(new PrivilegedAction<StructureLoader>() {
             @Override
             public StructureLoader run() {
                 return new StructureLoader(myLoader);
@@ -597,18 +627,37 @@ public final class Context {
         }
         this.errors    = errors;
 
+        // if user passed --module-path, we create a module class loader with
+        // passed appLoader as the parent.
+        final String modulePath = env._module_path;
+        ClassLoader appCl = null;
+        if (!env._compile_only && modulePath != null && !modulePath.isEmpty()) {
+            // make sure that caller can create a class loader.
+            if (sm != null) {
+                sm.checkCreateClassLoader();
+            }
+            appCl = AccessController.doPrivileged(new PrivilegedAction<ClassLoader>() {
+                @Override
+                public ClassLoader run() {
+                    return createModuleLoader(appLoader, modulePath, env._add_modules);
+                }
+            });
+        } else {
+            appCl = appLoader;
+        }
+
         // if user passed -classpath option, make a URLClassLoader with that and
-        // the app loader as the parent.
-        final String classPath = options.getString("classpath");
+        // the app loader or module app loader as the parent.
+        final String classPath = env._classpath;
         if (!env._compile_only && classPath != null && !classPath.isEmpty()) {
             // make sure that caller can create a class loader.
             if (sm != null) {
                 sm.checkCreateClassLoader();
             }
-            this.appLoader = NashornLoader.createClassLoader(classPath, appLoader);
-        } else {
-            this.appLoader = appLoader;
+            appCl = NashornLoader.createClassLoader(classPath, appCl);
         }
+
+        this.appLoader = appCl;
         this.dynamicLinker = Bootstrap.createDynamicLinker(this.appLoader, env._unstable_relink_threshold);
 
         final int cacheSize = env._class_cache_size;
@@ -791,7 +840,7 @@ public final class Context {
         // Nashorn extension: any 'eval' is unconditionally strict when -strict is specified.
         boolean strictFlag = strict || this._strict;
 
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = compile(source, new ThrowErrorManager(), strictFlag, true);
         } catch (final ParserException e) {
@@ -1022,7 +1071,7 @@ public final class Context {
         }
         return (Class<? extends ScriptObject>)structureClasses.computeIfAbsent(fullName, (name) -> {
             try {
-                return Class.forName(name, true, sharedLoader);
+                return Class.forName(name, true, theStructLoader);
             } catch (final ClassNotFoundException e) {
                 throw new AssertionError(e);
             }
@@ -1144,7 +1193,17 @@ public final class Context {
         }
 
         // Try finding using the "app" loader.
-        return Class.forName(fullName, true, appLoader);
+        if (appLoader != null) {
+            return Class.forName(fullName, true, appLoader);
+        } else {
+            final Class<?> cl = Class.forName(fullName);
+            // return the Class only if it was loaded by boot loader
+            if (cl.getClassLoader() == null) {
+                return cl;
+            } else {
+                throw new ClassNotFoundException(fullName);
+            }
+        }
     }
 
     /**
@@ -1175,7 +1234,7 @@ public final class Context {
             // No verification when security manager is around as verifier
             // may load further classes - which should be avoided.
             if (System.getSecurityManager() == null) {
-                CheckClassAdapter.verify(new ClassReader(bytecode), sharedLoader, false, new PrintWriter(System.err, true));
+                CheckClassAdapter.verify(new ClassReader(bytecode), theStructLoader, false, new PrintWriter(System.err, true));
             }
         }
     }
@@ -1281,6 +1340,62 @@ public final class Context {
         return getContextTrusted().dynamicLinker;
     }
 
+    /**
+     * Creates a module layer with one module that is defined to the given class
+     * loader.
+     *
+     * @param descriptor the module descriptor for the newly created module
+     * @param loader the class loader of the module
+     * @return the new Module
+     */
+    static Module createModuleTrusted(final ModuleDescriptor descriptor, final ClassLoader loader) {
+        return createModuleTrusted(Layer.boot(), descriptor, loader);
+    }
+
+    /**
+     * Creates a module layer with one module that is defined to the given class
+     * loader.
+     *
+     * @param parent the parent layer of the new module
+     * @param descriptor the module descriptor for the newly created module
+     * @param loader the class loader of the module
+     * @return the new Module
+     */
+    static Module createModuleTrusted(final Layer parent, final ModuleDescriptor descriptor, final ClassLoader loader) {
+        final String mn = descriptor.name();
+
+        final ModuleReference mref = new ModuleReference(descriptor, null, () -> {
+            IOException ioe = new IOException("<dynamic module>");
+            throw new UncheckedIOException(ioe);
+        });
+
+        final ModuleFinder finder = new ModuleFinder() {
+            @Override
+            public Optional<ModuleReference> find(final String name) {
+                if (name.equals(mn)) {
+                    return Optional.of(mref);
+                } else {
+                    return Optional.empty();
+                }
+            }
+            @Override
+            public Set<ModuleReference> findAll() {
+                return Set.of(mref);
+            }
+        };
+
+        final Configuration cf = parent.configuration()
+                .resolveRequires(finder, ModuleFinder.of(), Set.of(mn));
+
+        final PrivilegedAction<Layer> pa = () -> parent.defineModules(cf, name -> loader);
+        final Layer layer = AccessController.doPrivileged(pa, GET_LOADER_ACC_CTXT);
+
+        final Module m = layer.findModule(mn).get();
+        assert m.getLayer() == layer;
+
+        return m;
+    }
+
     static Context getContextTrustedOrNull() {
         final Global global = Context.getGlobal();
         return global == null ? null : getContext(global);
@@ -1304,7 +1419,7 @@ public final class Context {
         ClassLoader loader = null;
         try {
             loader = clazz.getClassLoader();
-        } catch (SecurityException ignored) {
+        } catch (final SecurityException ignored) {
             // This could fail because of anonymous classes being used.
             // Accessing loader of anonymous class fails (for extension
             // loader class too?). In any case, for us fetching Context
@@ -1419,7 +1534,7 @@ public final class Context {
         final URL          url    = source.getURL();
         final CodeSource   cs     = new CodeSource(url, (CodeSigner[])null);
         final CodeInstaller installer;
-        if (!env.useAnonymousClasses(isEval) || env._persistent_cache || !env._lazy_compilation) {
+        if (!env.useAnonymousClasses(source.getLength()) || env._persistent_cache || !env._lazy_compilation) {
             // Persistent code cache and eager compilation preclude use of VM anonymous classes
             final ScriptLoader loader = env._loader_per_compile ? createNewLoader() : scriptLoader;
             installer = new NamedContextCodeInstaller(this, cs, loader);
@@ -1463,7 +1578,7 @@ public final class Context {
              new PrivilegedAction<ScriptLoader>() {
                 @Override
                 public ScriptLoader run() {
-                    return new ScriptLoader(appLoader, Context.this);
+                    return new ScriptLoader(Context.this);
                 }
              }, CREATE_LOADER_ACC_CTXT);
     }
@@ -1666,5 +1781,38 @@ public final class Context {
      */
     public SwitchPoint getBuiltinSwitchPoint(final String name) {
         return builtinSwitchPoints.get(name);
+    }
+
+    private static ClassLoader createModuleLoader(final ClassLoader cl,
+            final String modulePath, final String addModules) {
+        if (addModules == null) {
+            throw new IllegalArgumentException("--module-path specified with no --add-modules");
+        }
+
+        final Path[] paths = Stream.of(modulePath.split(File.pathSeparator)).
+            map(s -> Paths.get(s)).
+            toArray(sz -> new Path[sz]);
+        final ModuleFinder mf = ModuleFinder.of(paths);
+        final Set<ModuleReference> mrefs = mf.findAll();
+        if (mrefs.isEmpty()) {
+            throw new RuntimeException("No modules in script --module-path: " + modulePath);
+        }
+
+        final Set<String> rootMods;
+        if (addModules.equals("ALL-MODULE-PATH")) {
+            rootMods = mrefs.stream().
+                map(mr->mr.descriptor().name()).
+                collect(Collectors.toSet());
+        } else {
+            rootMods = Stream.of(addModules.split(",")).
+                map(String::trim).
+                collect(Collectors.toSet());
+        }
+
+        final Layer boot = Layer.boot();
+        final Configuration conf = boot.configuration().
+            resolveRequires(mf, ModuleFinder.of(), rootMods);
+        final String firstMod = rootMods.iterator().next();
+        return boot.defineModulesWithOneLoader(conf, cl).findLoader(firstMod);
     }
 }

@@ -26,17 +26,16 @@ import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
-import jdk.tools.jlink.plugin.ModuleEntry;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.plugin.TransformerPlugin;
+import jdk.tools.jlink.plugin.ResourcePoolEntry;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.ResourcePoolBuilder;
+import jdk.tools.jlink.plugin.Plugin;
 
 /**
  * Custom plugin
  */
-public final class HelloPlugin implements TransformerPlugin {
+public final class HelloPlugin implements Plugin {
 
     private static final String OUTPUT_FILE = "customplugin.txt";
     public static final String NAME = "hello";
@@ -49,7 +48,7 @@ public final class HelloPlugin implements TransformerPlugin {
     }
 
     @Override
-    public void visit(ModulePool inResources, ModulePool outResources) {
+    public ResourcePool transform(ResourcePool inResources, ResourcePoolBuilder outResources) {
         try {
             System.out.println("Hello!!!!!!!!!!");
             File f = new File(OUTPUT_FILE);
@@ -60,13 +59,7 @@ public final class HelloPlugin implements TransformerPlugin {
         } catch (IOException ex) {
             throw new UncheckedIOException(ex);
         }
-    }
-
-    @Override
-    public Set<Category> getType() {
-        Set<Category> set = new HashSet<>();
-        set.add(Category.TRANSFORMER);
-        return Collections.unmodifiableSet(set);
+        return outResources.build();
     }
 
     @Override

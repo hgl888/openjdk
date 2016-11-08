@@ -504,11 +504,12 @@ class Thread implements Runnable {
     }
 
     /**
-     * Creates a new Thread that inherits the given AccessControlContext.
+     * Creates a new Thread that inherits the given AccessControlContext
+     * but thread-local variables are not inherited.
      * This is not a public constructor.
      */
     Thread(Runnable target, AccessControlContext acc) {
-        init(null, target, "Thread-" + nextThreadNum(), 0, acc, true);
+        init(null, target, "Thread-" + nextThreadNum(), 0, acc, false);
     }
 
     /**
@@ -1507,28 +1508,25 @@ class Thread implements Runnable {
     }
 
     /**
-     * Returns the context ClassLoader for this Thread. The context
-     * ClassLoader is provided by the creator of the thread for use
+     * Returns the context {@code ClassLoader} for this thread. The context
+     * {@code ClassLoader} is provided by the creator of the thread for use
      * by code running in this thread when loading classes and resources.
      * If not {@linkplain #setContextClassLoader set}, the default is the
-     * ClassLoader context of the parent Thread. The context ClassLoader of the
+     * {@code ClassLoader} context of the parent thread. The context
+     * {@code ClassLoader} of the
      * primordial thread is typically set to the class loader used to load the
      * application.
      *
-     * <p>If a security manager is present, and the invoker's class loader is not
-     * {@code null} and is not the same as or an ancestor of the context class
-     * loader, then this method invokes the security manager's {@link
-     * SecurityManager#checkPermission(java.security.Permission) checkPermission}
-     * method with a {@link RuntimePermission RuntimePermission}{@code
-     * ("getClassLoader")} permission to verify that retrieval of the context
-     * class loader is permitted.
      *
-     * @return  the context ClassLoader for this Thread, or {@code null}
+     * @return  the context {@code ClassLoader} for this thread, or {@code null}
      *          indicating the system class loader (or, failing that, the
      *          bootstrap class loader)
      *
      * @throws  SecurityException
-     *          if the current thread cannot get the context ClassLoader
+     *          if a security manager is present, and the caller's class loader
+     *          is not {@code null} and is not the same as or an ancestor of the
+     *          context class loader, and the caller does not have the
+     *          {@link RuntimePermission}{@code ("getClassLoader")}
      *
      * @since 1.2
      */

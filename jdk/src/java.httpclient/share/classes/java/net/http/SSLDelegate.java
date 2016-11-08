@@ -20,7 +20,9 @@
  *
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
+ * questions.
  */
+
 package java.net.http;
 
 import java.io.IOException;
@@ -344,8 +346,8 @@ class SSLDelegate {
         /* we wait until some user data arrives */
         int mark = dst.position();
         WrapperResult r = null;
-        assert dst.position() == 0;
-        while (dst.position() == 0) {
+        int pos = dst.position();
+        while (dst.position() == pos) {
             r = wrapper.recvAndUnwrap (dst);
             dst = (r.buf != dst) ? r.buf: dst;
             Status status = r.result.getStatus();

@@ -90,11 +90,12 @@ public interface Plugin {
     }
 
     /**
-     * The Plugin set of types.
-     * @return The set of types.
+     * The type of this plugin.
+     *
+     * @return The type of this plugin
      */
-    public default Set<Category> getType() {
-        return Collections.emptySet();
+    public default Category getType() {
+        return Category.TRANSFORMER;
     }
 
     /**
@@ -103,24 +104,6 @@ public interface Plugin {
      */
     public default Set<State> getState() {
         return EnumSet.of(State.FUNCTIONAL);
-    }
-
-    /**
-     * The set of plugin names that must be located, within the stack of plugins,
-     * before this plugin.
-     * @return The set of names. By default this set is empty.
-     */
-    public default Set<String> isBefore() {
-        return Collections.emptySet();
-    }
-
-    /**
-     * The set of plugin names that must be located, within the stack of plugins,
-     * after this plugin.
-     * @return The set of names. By default this set is empty.
-     */
-    public default Set<String> isAfter() {
-        return Collections.emptySet();
     }
 
     /**
@@ -198,4 +181,15 @@ public interface Plugin {
      */
     public default void configure(Map<String, String> config) {
     }
+
+    /**
+     * Visit the content of the modules that are composing the image.
+     *
+     * @param in Read only content.
+     * @param out The pool to fill with content. This pool must contain
+     * the result of the visit.
+     *
+     * @throws PluginException
+     */
+    public ResourcePool transform(ResourcePool in, ResourcePoolBuilder out);
 }

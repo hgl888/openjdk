@@ -630,6 +630,19 @@ final class ProcessImpl extends Process {
         return !hasExited;
     }
 
+    /**
+     * The {@code toString} method returns a string consisting of
+     * the native process ID of the process and the exit value of the process.
+     *
+     * @return a string representation of the object.
+     */
+    @Override
+    public String toString() {
+        return new StringBuilder("Process[pid=").append(pid)
+                .append(", exitValue=").append(hasExited ? exitcode : "\"not exited\"")
+                .append("]").toString();
+    }
+
     private static native void init();
 
     static {
@@ -649,7 +662,7 @@ final class ProcessImpl extends Process {
         private final Object closeLock = new Object();
 
         ProcessPipeInputStream(int fd) {
-            super(new FileInputStream(newFileDescriptor(fd)));
+            super(new PipeInputStream(newFileDescriptor(fd)));
         }
         private static byte[] drainInputStream(InputStream in)
                 throws IOException {
@@ -725,8 +738,7 @@ final class ProcessImpl extends Process {
     // behavior.  By deferring the close we allow any pending reads to see -1
     // (EOF) as they did before.
     //
-    private static class DeferredCloseInputStream extends FileInputStream
-    {
+    private static class DeferredCloseInputStream extends PipeInputStream {
         DeferredCloseInputStream(FileDescriptor fd) {
             super(fd);
         }
@@ -848,7 +860,7 @@ final class ProcessImpl extends Process {
         private boolean closePending = false;
 
         DeferredCloseProcessPipeInputStream(int fd) {
-            super(new FileInputStream(newFileDescriptor(fd)));
+            super(new PipeInputStream(newFileDescriptor(fd)));
         }
 
         private InputStream drainInputStream(InputStream in)

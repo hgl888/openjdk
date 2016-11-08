@@ -1516,11 +1516,12 @@ public final class String
      * @return  a hash code value for this object.
      */
     public int hashCode() {
-        if (hash == 0 && value.length > 0) {
-            hash = isLatin1() ? StringLatin1.hashCode(value)
-                              : StringUTF16.hashCode(value);
+        int h = hash;
+        if (h == 0 && value.length > 0) {
+            hash = h = isLatin1() ? StringLatin1.hashCode(value)
+                                  : StringUTF16.hashCode(value);
         }
-        return hash;
+        return h;
     }
 
     /**
@@ -2424,15 +2425,12 @@ public final class String
      *
      * <blockquote>For example,
      * <pre>{@code
-     *     List<String> strings = new LinkedList<>();
-     *     strings.add("Java");strings.add("is");
-     *     strings.add("cool");
+     *     List<String> strings = List.of("Java", "is", "cool");
      *     String message = String.join(" ", strings);
      *     //message returned is: "Java is cool"
      *
-     *     Set<String> strings = new LinkedHashSet<>();
-     *     strings.add("Java"); strings.add("is");
-     *     strings.add("very"); strings.add("cool");
+     *     Set<String> strings =
+     *         new LinkedHashSet<>(List.of("Java", "is", "very", "cool"));
      *     String message = String.join("-", strings);
      *     //message returned is: "Java-is-very-cool"
      * }</pre></blockquote>
@@ -2721,7 +2719,9 @@ public final class String
      * arguments.
      *
      * <p> The locale always used is the one returned by {@link
-     * java.util.Locale#getDefault() Locale.getDefault()}.
+     * java.util.Locale#getDefault(java.util.Locale.Category)
+     * Locale.getDefault(Locale.Category)} with
+     * {@link java.util.Locale.Category#FORMAT FORMAT} category specified.
      *
      * @param  format
      *         A <a href="../util/Formatter.html#syntax">format string</a>

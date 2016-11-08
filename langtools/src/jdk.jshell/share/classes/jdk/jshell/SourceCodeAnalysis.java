@@ -25,6 +25,7 @@
 
 package jdk.jshell;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -51,7 +52,7 @@ public abstract class SourceCodeAnalysis {
 
     /**
      * Compute possible follow-ups for the given input.
-     * Uses information from the current <code>JShell</code> state, including
+     * Uses information from the current {@code JShell} state, including
      * type information, to filter the suggestions.
      * @param input the user input, so far
      * @param cursor the current position of the cursors in the given {@code input} text
@@ -92,44 +93,84 @@ public abstract class SourceCodeAnalysis {
     public abstract QualifiedNames listQualifiedNames(String code, int cursor);
 
     /**
+     * Returns the wrapper information for the {@code Snippet}. The wrapper changes as
+     * the environment changes, so calls to this method at different times may
+     * yield different results.
+     *
+     * @param snippet the {@code Snippet} from which to retrieve the wrapper
+     * @return information on the wrapper
+     */
+    public abstract SnippetWrapper wrapper(Snippet snippet);
+
+    /**
+     * Returns the wrapper information for the snippet within the
+     * input source string.
+     * <p>
+     * Wrapper information for malformed and incomplete
+     * snippets also generate wrappers. The list is in snippet encounter
+     * order. The wrapper changes as the environment changes, so calls to this
+     * method at different times may yield different results.
+     * <p>
+     * The input should be
+     * exactly one complete snippet of source code, that is, one expression,
+     * statement, variable declaration, method declaration, class declaration,
+     * or import.
+     * To break arbitrary input into individual complete snippets, use
+     * {@link SourceCodeAnalysis#analyzeCompletion(String)}.
+     * <p>
+     * The wrapper may not match that returned by
+     * {@link SourceCodeAnalysis#wrapper(Snippet) wrapper(Snippet)},
+     * were the source converted to a {@code Snippet}.
+     *
+     * @param input the source input from which to generate wrappers
+     * @return a list of wrapper information
+     */
+    public abstract List<SnippetWrapper> wrappers(String input);
+
+    /**
+     * Returns a collection of {@code Snippet}s which might need updating if the
+     * given {@code Snippet} is updated. The returned collection is designed to
+     * be inclusive and may include many false positives.
+     *
+     * @param snippet the {@code Snippet} whose dependents are requested
+     * @return the collection of dependents
+     */
+    public abstract Collection<Snippet> dependents(Snippet snippet);
+
+    /**
      * Internal only constructor
      */
     SourceCodeAnalysis() {}
 
     /**
-     * The result of <code>analyzeCompletion(String input)</code>.
-     * Describes the completeness and position of the first snippet in the given input.
+     * The result of {@code analyzeCompletion(String input)}.
+     * Describes the completeness of the first snippet in the given input.
      */
-    public static class CompletionInfo {
-
-        CompletionInfo(Completeness completeness, int unitEndPos, String source, String remaining) {
-            this.completeness = completeness;
-            this.unitEndPos = unitEndPos;
-            this.source = source;
-            this.remaining = remaining;
-        }
+    public interface CompletionInfo {
 
         /**
          * The analyzed completeness of the input.
+         *
+         * @return an enum describing the completeness of the input string.
          */
-        public final Completeness completeness;
+        Completeness completeness();
 
         /**
-         * The end of the first unit of source.
+         * Input remaining after the complete part of the source.
+         *
+         * @return the portion of the input string that remains after the
+         * complete Snippet
          */
-        public final int unitEndPos;
+        String remaining();
 
         /**
-         * Source code for the first unit of code input.  For example, first
-         * statement, or first method declaration.  Trailing semicolons will
-         * be added, as needed
+         * Source code for the first Snippet of code input. For example, first
+         * statement, or first method declaration. Trailing semicolons will be
+         * added, as needed.
+         *
+         * @return the source of the first encountered Snippet
          */
-        public final String source;
-
-        /**
-         * Input remaining after the source
-         */
-        public final String remaining;
+        String source();
     }
 
     /**
@@ -181,44 +222,47 @@ public abstract class SourceCodeAnalysis {
          */
         UNKNOWN(true);
 
-        /**
-         * Is the first snippet of source complete. For example, "x=" is not
-         * complete, but "x=2" is complete, even though a subsequent line could
-         * make it "x=2+2". Already erroneous code is marked complete.
-         */
-        public final boolean isComplete;
+        private final boolean isComplete;
 
         Completeness(boolean isComplete) {
             this.isComplete = isComplete;
+        }
+
+        /**
+         * Indicates whether the first snippet of source is complete.
+         * For example, "{@code x=}" is not
+         * complete, but "{@code x=2}" is complete, even though a subsequent line could
+         * make it "{@code x=2+2}". Already erroneous code is marked complete.
+         *
+         * @return {@code true} if the input is or begins a complete Snippet;
+         * otherwise {@code false}
+         */
+        public boolean isComplete() {
+            return isComplete;
         }
     }
 
     /**
      * A candidate for continuation of the given user's input.
      */
-    public static class Suggestion {
-
-        /**
-         * Create a {@code Suggestion} instance.
-         * @param continuation a candidate continuation of the user's input
-         * @param isSmart is the candidate "smart"
-         */
-        public Suggestion(String continuation, boolean isSmart) {
-            this.continuation = continuation;
-            this.isSmart = isSmart;
-        }
+    public interface Suggestion {
 
         /**
          * The candidate continuation of the given user's input.
+         *
+         * @return the continuation string
          */
-        public final String continuation;
+        String continuation();
 
         /**
-         * Is it an input continuation that matches the target type and is thus more
-         * likely to be the desired continuation. A smart continuation
-         * is preferred.
+         * Indicates whether input continuation matches the target type and is thus
+         * more likely to be the desired continuation. A matching continuation is
+         * preferred.
+         *
+         * @return {@code true} if this suggested continuation matches the
+         * target type; otherwise {@code false}
          */
-        public final boolean isSmart;
+        boolean matchesType();
     }
 
     /**
@@ -259,26 +303,108 @@ public abstract class SourceCodeAnalysis {
         }
 
         /**
-         * Whether the result is based on up to date data. The
+         * Indicates whether the result is based on up-to-date data. The
          * {@link SourceCodeAnalysis#listQualifiedNames(java.lang.String, int) listQualifiedNames}
          * method may return before the classpath is fully inspected, in which case this method will
          * return {@code false}. If the result is based on a fully inspected classpath, this method
          * will return {@code true}.
          *
-         * @return true iff the results is based on up-to-date data
+         * @return {@code true} if the result is based on up-to-date data;
+         * otherwise {@code false}
          */
         public boolean isUpToDate() {
             return upToDate;
         }
 
         /**
-         * Whether the given simple name in the original code refers to a resolvable element.
+         * Indicates whether the given simple name in the original code refers
+         * to a resolvable element.
          *
-         * @return true iff the given simple name in the original code refers to a resolvable element
+         * @return {@code true} if the given simple name in the original code
+         * refers to a resolvable element; otherwise {@code false}
          */
         public boolean isResolvable() {
             return resolvable;
         }
 
+    }
+
+    /**
+     * The wrapping of a snippet of Java source into valid top-level Java
+     * source. The wrapping will always either be an import or include a
+     * synthetic class at the top-level. If a synthetic class is generated, it
+     * will be proceeded by the package and import declarations, and may contain
+     * synthetic class members.
+     * <p>
+     * This interface, in addition to the mapped form, provides the context and
+     * position mapping information.
+     */
+    public interface SnippetWrapper {
+
+        /**
+         * Returns the input that is wrapped. For
+         * {@link SourceCodeAnalysis#wrappers(java.lang.String) wrappers(String)},
+         * this is the source of the snippet within the input. A variable
+         * declaration of {@code N} variables will map to {@code N} wrappers
+         * with the source separated.
+         * <p>
+         * For {@link SourceCodeAnalysis#wrapper(Snippet) wrapper(Snippet)},
+         * this is {@link Snippet#source() }.
+         *
+         * @return the input source corresponding to the wrapper.
+         */
+        String source();
+
+        /**
+         * Returns a Java class definition that wraps the
+         * {@link SnippetWrapper#source()} or, if an import, the import source.
+         * <p>
+         * If the input is not a valid Snippet, this will not be a valid
+         * class/import definition.
+         * <p>
+         * The source may be divided and mapped to different locations within
+         * the wrapped source.
+         *
+         * @return the source wrapped into top-level Java code
+         */
+        String wrapped();
+
+        /**
+         * Returns the fully qualified class name of the
+         * {@link SnippetWrapper#wrapped() } class.
+         * For erroneous input, a best guess is returned.
+         *
+         * @return the name of the synthetic wrapped class; if an import, the
+         * name is not defined
+         */
+        String fullClassName();
+
+        /**
+         * Returns the {@link Snippet.Kind} of the
+         * {@link SnippetWrapper#source()}.
+         *
+         * @return an enum representing the general kind of snippet.
+         */
+        Snippet.Kind kind();
+
+        /**
+         * Maps character position within the source to character position
+         * within the wrapped.
+         *
+         * @param pos the position in {@link SnippetWrapper#source()}
+         * @return the corresponding position in
+         * {@link SnippetWrapper#wrapped() }
+         */
+        int sourceToWrappedPosition(int pos);
+
+        /**
+         * Maps character position within the wrapped to character position
+         * within the source.
+         *
+         * @param pos the position in {@link SnippetWrapper#wrapped()}
+         * @return the corresponding position in
+         * {@link SnippetWrapper#source() }
+         */
+        int wrappedToSourcePosition(int pos);
     }
 }

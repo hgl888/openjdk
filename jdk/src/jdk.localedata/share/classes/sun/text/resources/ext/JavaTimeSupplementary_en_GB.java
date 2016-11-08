@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,7 @@
 /*
  * COPYRIGHT AND PERMISSION NOTICE
  *
- * Copyright (C) 1991-2015 Unicode, Inc. All rights reserved.
+ * Copyright (C) 1991-2016 Unicode, Inc. All rights reserved.
  * Distributed under the Terms of Use in
  * http://www.unicode.org/copyright.html.
  *
@@ -72,37 +72,59 @@ import sun.util.resources.OpenListResourceBundle;
 public class JavaTimeSupplementary_en_GB extends OpenListResourceBundle {
     @Override
     protected final Object[][] getContents() {
+        final String[] sharedAmPmMarkers = {
+            "am",
+            "pm",
+        };
+
+        final String[] sharedDatePatterns = {
+            "EEEE, d MMMM y GGGG",
+            "d MMMM y GGGG",
+            "d MMM y GGGG",
+            "dd/MM/y G",
+        };
+
+        final String[] sharedTimePatterns = {
+            "HH:mm:ss zzzz",
+            "HH:mm:ss z",
+            "HH:mm:ss",
+            "HH:mm",
+        };
+
+        final String[] sharedJavaTimeDatePatterns = {
+            "EEEE, d MMMM y G",
+            "d MMMM y G",
+            "d MMM y G",
+            "dd/MM/y GGGGG",
+        };
+
         return new Object[][] {
             { "field.dayperiod",
-                "a.m./p.m." },
+                "am/pm" },
             { "islamic.AmPmMarkers",
-                new String[] {
-                    "a.m.",
-                    "p.m.",
-                }
-            },
+                sharedAmPmMarkers },
+            { "islamic.DatePatterns",
+                sharedDatePatterns },
             { "islamic.TimePatterns",
-                new String[] {
-                    "HH:mm:ss zzzz",
-                    "HH:mm:ss z",
-                    "HH:mm:ss",
-                    "HH:mm",
-                }
-            },
+                sharedTimePatterns },
+            { "islamic.abbreviated.AmPmMarkers",
+                sharedAmPmMarkers },
+            { "java.time.buddhist.DatePatterns",
+                sharedJavaTimeDatePatterns },
+            { "java.time.islamic.DatePatterns",
+                sharedJavaTimeDatePatterns },
+            { "java.time.japanese.DatePatterns",
+                sharedJavaTimeDatePatterns },
+            { "java.time.roc.DatePatterns",
+                sharedJavaTimeDatePatterns },
             { "roc.AmPmMarkers",
-                new String[] {
-                    "a.m.",
-                    "p.m.",
-                }
-            },
+                sharedAmPmMarkers },
+            { "roc.DatePatterns",
+                sharedDatePatterns },
             { "roc.TimePatterns",
-                new String[] {
-                    "HH:mm:ss zzzz",
-                    "HH:mm:ss z",
-                    "HH:mm:ss",
-                    "HH:mm",
-                }
-            },
+                sharedTimePatterns },
+            { "roc.abbreviated.AmPmMarkers",
+                sharedAmPmMarkers },
         };
     }
 }

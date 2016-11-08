@@ -24,33 +24,28 @@
  */
 package jdk.tools.jlink.internal.plugins;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.function.Predicate;
 import jdk.internal.org.objectweb.asm.ClassReader;
 import jdk.internal.org.objectweb.asm.ClassWriter;
-import jdk.tools.jlink.plugin.ModuleEntry;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.plugin.TransformerPlugin;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.ResourcePoolBuilder;
+import jdk.tools.jlink.plugin.ResourcePoolEntry;
+import jdk.tools.jlink.plugin.Plugin;
 
 /**
  *
  * Strip debug attributes plugin
  */
-public final class StripDebugPlugin implements TransformerPlugin {
-    private static final String[] PATTERNS = {"*.diz"};
+public final class StripDebugPlugin implements Plugin {
     public static final String NAME = "strip-debug";
     private final Predicate<String> predicate;
+
     public StripDebugPlugin() {
-        try {
-            predicate = new ResourceFilter(PATTERNS);
-        } catch (IOException ex) {
-            throw new UncheckedIOException(ex);
-        }
+        this((path) -> false);
+    }
+
+    StripDebugPlugin(Predicate<String> predicate) {
+        this.predicate = predicate;
     }
 
     @Override
@@ -59,39 +54,34 @@ public final class StripDebugPlugin implements TransformerPlugin {
     }
 
     @Override
-    public Set<Category> getType() {
-        Set<Category> set = new HashSet<>();
-        set.add(Category.TRANSFORMER);
-        return Collections.unmodifiableSet(set);
-    }
-
-    @Override
     public String getDescription() {
         return PluginsResourceBundle.getDescription(NAME);
     }
 
     @Override
-    public void visit(ModulePool in, ModulePool out) {
+    public ResourcePool transform(ResourcePool in, ResourcePoolBuilder out) {
         //remove *.diz files as well as debug attributes.
         in.transformAndCopy((resource) -> {
-            ModuleEntry res = resource;
-            if (resource.getType().equals(ModuleEntry.Type.CLASS_OR_RESOURCE)) {
-                String path = resource.getPath();
+            ResourcePoolEntry res = resource;
+            if (resource.type().equals(ResourcePoolEntry.Type.CLASS_OR_RESOURCE)) {
+                String path = resource.path();
                 if (path.endsWith(".class")) {
                     if (path.endsWith("module-info.class")) {
                         // XXX. Do we have debug info? Is Asm ready for module-info?
                     } else {
-                        ClassReader reader = new ClassReader(resource.getBytes());
+                        ClassReader reader = new ClassReader(resource.contentBytes());
                         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
                         reader.accept(writer, ClassReader.SKIP_DEBUG);
                         byte[] content = writer.toByteArray();
-                        res = ModuleEntry.create(path, new ByteArrayInputStream(content), content.length);
+                        res = resource.copyWithContent(content);
                     }
                 }
-            } else if (predicate.test(res.getPath())) {
+            } else if (predicate.test(res.path())) {
                 res = null;
             }
             return res;
         }, out);
+
+        return out.build();
     }
 }

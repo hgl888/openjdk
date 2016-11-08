@@ -127,13 +127,20 @@ public class XRPMBlitLoops {
             vImgSurfaceType = SurfaceType.IntArgbPre;
         }
 
-        if (vImg == null || vImg.getWidth() < w || vImg.getHeight() < h) {
+        if (vImg == null || vImg.getWidth() < w || vImg.getHeight() < h ||
+            // Sometimes we get volatile image of wrong dest surface type,
+            // so recreating it
+            !(vImg.getDestSurface() instanceof XRSurfaceData))
+        {
             if (vImg != null) {
                 vImg.flush();
             }
             vImg = (SunVolatileImage) dst.getGraphicsConfig().createCompatibleVolatileImage(w, h, src.getTransparency());
             vImg.setAccelerationPriority(1.0f);
 
+            if (!(vImg.getDestSurface() instanceof XRSurfaceData)) {
+                throw new InvalidPipeException("Could not create XRSurfaceData");
+            }
             if (src.getTransparency() == SurfaceData.OPAQUE) {
                 rgbTmpPM = new WeakReference<SunVolatileImage>(vImg);
             } else {
@@ -142,6 +149,11 @@ public class XRPMBlitLoops {
         }
 
         Blit swToSurfaceBlit = Blit.getFromCache(src.getSurfaceType(), CompositeType.SrcNoEa, vImgSurfaceType);
+
+        if (!(vImg.getDestSurface() instanceof XRSurfaceData)) {
+            throw new InvalidPipeException("wrong surface data type: " + vImg.getDestSurface());
+        }
+
         XRSurfaceData vImgSurface = (XRSurfaceData) vImg.getDestSurface();
         swToSurfaceBlit.Blit(src, vImgSurface, AlphaComposite.Src, null,
                              sx, sy, 0, 0, w, h);

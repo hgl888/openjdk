@@ -33,7 +33,6 @@ import java.nio.file.Paths;
 import java.security.AccessController;
 import java.security.Permission;
 import java.security.PrivilegedAction;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -42,6 +41,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+
 import sun.security.action.GetPropertyAction;
 
 /**
@@ -267,6 +267,13 @@ public interface ModuleFinder {
      *
      * </ul>
      *
+     * <p> If a {@code ModuleDescriptor} cannot be created (by means of the
+     * {@link ModuleDescriptor.Builder ModuleDescriptor.Builder} API) for an
+     * automatic module then {@code FindException} is thrown. This can arise,
+     * for example, when a legal Java identifier name cannot be derived from
+     * the file name of the JAR file or where a package name derived from an
+     * entry ending with {@code .class} is not a legal Java identifier. </p>
+     *
      * <p> In addition to JAR files, an implementation may also support modules
      * that are packaged in other implementation specific module formats. When
      * a file is encountered that is not recognized as a packaged module then
@@ -325,7 +332,7 @@ public interface ModuleFinder {
      *
      * <p> When locating modules then any exceptions or errors thrown by the
      * {@code find} or {@code findAll} methods of the underlying module finders
-     * will be propogated to the caller of the resulting module finder's
+     * will be propagated to the caller of the resulting module finder's
      * {@code find} or {@code findAll} methods. </p>
      *
      * @param finders
@@ -334,8 +341,8 @@ public interface ModuleFinder {
      * @return A {@code ModuleFinder} that composes a sequence of module finders
      */
     static ModuleFinder compose(ModuleFinder... finders) {
-        final List<ModuleFinder> finderList = Arrays.asList(finders);
-        finderList.forEach(Objects::requireNonNull);
+        // copy the list, also checking for nulls
+        final List<ModuleFinder> finderList = List.of(finders);
 
         return new ModuleFinder() {
             private final Map<String, ModuleReference> nameToModule = new HashMap<>();

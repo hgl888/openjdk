@@ -23,34 +23,38 @@
 
 package compiler.jvmci.common;
 
-import jdk.vm.ci.code.Architecture;
 import jdk.vm.ci.code.CompilationRequest;
 import jdk.vm.ci.code.CompilationRequestResult;
-import jdk.vm.ci.hotspot.HotSpotVMEventListener;
-import jdk.vm.ci.meta.ResolvedJavaMethod;
+import jdk.vm.ci.hotspot.services.HotSpotVMEventListener;
 import jdk.vm.ci.runtime.JVMCICompiler;
-import jdk.vm.ci.runtime.JVMCICompilerFactory;
 import jdk.vm.ci.runtime.JVMCIRuntime;
+import jdk.vm.ci.runtime.services.JVMCICompilerFactory;
 
 /*
  * A stub classes to be able to use jvmci
  */
 public class JVMCIHelpers {
 
-    public static class EmptyVMEventListener implements HotSpotVMEventListener {
+    public static class EmptyVMEventListener extends HotSpotVMEventListener {
         // just empty, using default interface methods
     }
 
+    public static class EmptyCompilationRequestResult implements CompilationRequestResult {
+        @Override
+        public Object getFailure() {
+            return "no compiler configured";
+        }
+    }
     public static class EmptyHotspotCompiler implements JVMCICompiler {
 
         @Override
         public CompilationRequestResult compileMethod(CompilationRequest request) {
             // do nothing
-            return CompilationRequestResult.failure("no compiler configured", true);
+            return new EmptyCompilationRequestResult();
         }
     }
 
-    public static class EmptyCompilerFactory implements JVMCICompilerFactory {
+    public static class EmptyCompilerFactory extends JVMCICompilerFactory {
 
         @Override
         public String getCompilerName() {

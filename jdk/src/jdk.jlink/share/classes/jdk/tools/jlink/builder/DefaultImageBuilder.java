@@ -1,4 +1,3 @@
-
 /*
  * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -23,6 +22,7 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
+
 package jdk.tools.jlink.builder;
 
 import java.io.BufferedOutputStream;
@@ -34,19 +34,20 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
-import java.io.UncheckedIOException;
 import java.io.Writer;
 import java.lang.module.ModuleDescriptor;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermission;
-import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -54,12 +55,14 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import static java.util.stream.Collectors.*;
+
 import jdk.tools.jlink.internal.BasicImageWriter;
-import jdk.tools.jlink.internal.plugins.FileCopierPlugin;
 import jdk.tools.jlink.internal.plugins.FileCopierPlugin.SymImageFile;
-import jdk.tools.jlink.plugin.ExecutableImage;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.plugin.ModuleEntry;
+import jdk.tools.jlink.internal.ExecutableImage;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.ResourcePoolEntry;
+import jdk.tools.jlink.plugin.ResourcePoolModule;
 import jdk.tools.jlink.plugin.PluginException;
 
 /**
@@ -77,28 +80,21 @@ public final class DefaultImageBuilder implements ImageBuilder {
         private final List<String> args;
         private final Set<String> modules;
 
-        public DefaultExecutableImage(Path home, Set<String> modules) {
-            this(home, modules, createArgs(home));
-        }
-
-        private DefaultExecutableImage(Path home, Set<String> modules,
-                List<String> args) {
+        DefaultExecutableImage(Path home, Set<String> modules) {
             Objects.requireNonNull(home);
-            Objects.requireNonNull(args);
             if (!Files.exists(home)) {
                 throw new IllegalArgumentException("Invalid image home");
             }
             this.home = home;
             this.modules = Collections.unmodifiableSet(modules);
-            this.args = Collections.unmodifiableList(args);
+            this.args = createArgs(home);
         }
 
         private static List<String> createArgs(Path home) {
             Objects.requireNonNull(home);
-            List<String> javaArgs = new ArrayList<>();
-            javaArgs.add(home.resolve("bin").
-                    resolve(getJavaProcessName()).toString());
-            return javaArgs;
+            Path binDir = home.resolve("bin");
+            String java = Files.exists(binDir.resolve("java"))? "java" : "java.exe";
+            return List.of(binDir.resolve(java).toString());
         }
 
         @Override
@@ -129,6 +125,7 @@ public final class DefaultImageBuilder implements ImageBuilder {
     private final Path root;
     private final Path mdir;
     private final Set<String> modules = new HashSet<>();
+    private String targetOsName;
 
     /**
      * Default image builder constructor.
@@ -144,14 +141,12 @@ public final class DefaultImageBuilder implements ImageBuilder {
         Files.createDirectories(mdir);
     }
 
-    private void storeFiles(Set<String> modules, Map<String, String> release) throws IOException {
+    private void storeFiles(Set<String> modules, Properties release) throws IOException {
         if (release != null) {
-            Properties props = new Properties();
-            props.putAll(release);
-            addModules(props, modules);
+            addModules(release, modules);
             File r = new File(root.toFile(), "release");
             try (FileOutputStream fo = new FileOutputStream(r)) {
-                props.store(fo, null);
+                release.store(fo, null);
             }
         }
     }
@@ -166,41 +161,64 @@ public final class DefaultImageBuilder implements ImageBuilder {
             }
             i++;
         }
-        props.setProperty("MODULES", builder.toString());
+        props.setProperty("MODULES", quote(builder.toString()));
     }
 
     @Override
-    public void storeFiles(ModulePool files) {
+    public void storeFiles(ResourcePool files) {
         try {
-            files.entries().forEach(f -> {
-                if (!f.getType().equals(ModuleEntry.Type.CLASS_OR_RESOURCE)) {
+            // populate release properties up-front. targetOsName
+            // field is assigned from there and used elsewhere.
+            Properties release = releaseProperties(files);
+            Path bin = root.resolve("bin");
+
+            // check any duplicated resource files
+            Map<Path, Set<String>> duplicates = new HashMap<>();
+            files.entries()
+                .filter(f -> f.type() != ResourcePoolEntry.Type.CLASS_OR_RESOURCE)
+                .collect(groupingBy(this::entryToImagePath,
+                         mapping(ResourcePoolEntry::moduleName, toSet())))
+                .entrySet()
+                .stream()
+                .filter(e -> e.getValue().size() > 1)
+                .forEach(e -> duplicates.put(e.getKey(), e.getValue()));
+
+            // write non-classes resource files to the image
+            files.entries()
+                .filter(f -> f.type() != ResourcePoolEntry.Type.CLASS_OR_RESOURCE)
+                .forEach(f -> {
                     try {
                         accept(f);
+                    } catch (FileAlreadyExistsException e) {
+                        // error for duplicated entries
+                        Path path = entryToImagePath(f);
+                        UncheckedIOException x =
+                            new UncheckedIOException(path + " duplicated in " +
+                                    duplicates.get(path), e);
+                        x.addSuppressed(e);
+                        throw x;
                     } catch (IOException ioExp) {
                         throw new UncheckedIOException(ioExp);
                     }
-                }
-            });
-            files.modules().forEach(m -> {
-                // Only add modules that contain packages
-                if (!m.getAllPackages().isEmpty()) {
-                    // Skip the fake module used by FileCopierPlugin when copying files.
-                    if (m.getName().equals(FileCopierPlugin.FAKE_MODULE)) {
-                        return;
-                    }
-                    modules.add(m.getName());
-                }
-            });
-            storeFiles(modules, files.getReleaseProperties());
+                });
 
-            if (Files.getFileStore(root).supportsFileAttributeView(PosixFileAttributeView.class)) {
-                // launchers in the bin directory need execute permission
-                Path bin = root.resolve("bin");
+            files.moduleView().modules().forEach(m -> {
+                // Only add modules that contain packages
+                if (!m.packages().isEmpty()) {
+                    modules.add(m.name());
+                }
+            });
+
+            storeFiles(modules, release);
+
+            if (root.getFileSystem().supportedFileAttributeViews()
+                    .contains("posix")) {
+                // launchers in the bin directory need execute permission.
+                // On Windows, "bin" also subdirectories containing jvm.dll.
                 if (Files.isDirectory(bin)) {
-                    Files.list(bin)
-                            .filter(f -> !f.toString().endsWith(".diz"))
-                            .filter(f -> Files.isRegularFile(f))
-                            .forEach(this::setExecutable);
+                    Files.find(bin, 2, (path, attrs) -> {
+                        return attrs.isRegularFile() && !path.toString().endsWith(".diz");
+                    }).forEach(this::setExecutable);
                 }
 
                 // jspawnhelper is in lib or lib/<arch>
@@ -213,10 +231,60 @@ public final class DefaultImageBuilder implements ImageBuilder {
                 }
             }
 
-            prepareApplicationFiles(files, modules);
+            // If native files are stripped completely, <root>/bin dir won't exist!
+            // So, don't bother generating launcher scripts.
+            if (Files.isDirectory(bin)) {
+                 prepareApplicationFiles(files, modules);
+            }
         } catch (IOException ex) {
             throw new PluginException(ex);
         }
+    }
+
+    // Parse version string and return a string that includes only version part
+    // leaving "pre", "build" information. See also: java.lang.Runtime.Version.
+    private static String parseVersion(String str) {
+        return Runtime.Version.parse(str).
+            version().
+            stream().
+            map(Object::toString).
+            collect(joining("."));
+    }
+
+    private static String quote(String str) {
+        return "\"" + str + "\"";
+    }
+
+    private Properties releaseProperties(ResourcePool pool) throws IOException {
+        Properties props = new Properties();
+        Optional<ResourcePoolModule> javaBase = pool.moduleView().findModule("java.base");
+        javaBase.ifPresent(mod -> {
+            // fill release information available from transformed "java.base" module!
+            ModuleDescriptor desc = mod.descriptor();
+            desc.osName().ifPresent(s -> {
+                props.setProperty("OS_NAME", quote(s));
+                this.targetOsName = s;
+            });
+            desc.osVersion().ifPresent(s -> props.setProperty("OS_VERSION", quote(s)));
+            desc.osArch().ifPresent(s -> props.setProperty("OS_ARCH", quote(s)));
+            desc.version().ifPresent(s -> props.setProperty("JAVA_VERSION",
+                    quote(parseVersion(s.toString()))));
+            desc.version().ifPresent(s -> props.setProperty("JAVA_FULL_VERSION",
+                    quote(s.toString())));
+        });
+
+        if (this.targetOsName == null) {
+            throw new PluginException("TargetPlatform attribute is missing for java.base module");
+        }
+
+        Optional<ResourcePoolEntry> release = pool.findEntry("/java.base/release");
+        if (release.isPresent()) {
+            try (InputStream is = release.get().content()) {
+                props.load(is);
+            }
+        }
+
+        return props;
     }
 
     /**
@@ -226,16 +294,16 @@ public final class DefaultImageBuilder implements ImageBuilder {
      * @param modules The set of modules that the runtime image contains.
      * @throws IOException
      */
-    protected void prepareApplicationFiles(ModulePool imageContent, Set<String> modules) throws IOException {
+    protected void prepareApplicationFiles(ResourcePool imageContent, Set<String> modules) throws IOException {
         // generate launch scripts for the modules with a main class
         for (String module : modules) {
             String path = "/" + module + "/module-info.class";
-            Optional<ModuleEntry> res = imageContent.findEntry(path);
+            Optional<ResourcePoolEntry> res = imageContent.findEntry(path);
             if (!res.isPresent()) {
                 throw new IOException("module-info.class not found for " + module + " module");
             }
             Optional<String> mainClass;
-            ByteArrayInputStream stream = new ByteArrayInputStream(res.get().getBytes());
+            ByteArrayInputStream stream = new ByteArrayInputStream(res.get().contentBytes());
             mainClass = ModuleDescriptor.read(stream).mainClass();
             if (mainClass.isPresent()) {
                 Path cmd = root.resolve("bin").resolve(module);
@@ -257,8 +325,8 @@ public final class DefaultImageBuilder implements ImageBuilder {
                         StandardOpenOption.CREATE_NEW)) {
                     writer.write(sb.toString());
                 }
-                if (Files.getFileStore(root.resolve("bin"))
-                        .supportsFileAttributeView(PosixFileAttributeView.class)) {
+                if (root.resolve("bin").getFileSystem()
+                        .supportedFileAttributeViews().contains("posix")) {
                     setExecutable(cmd);
                 }
                 // generate .bat file for Windows
@@ -298,26 +366,69 @@ public final class DefaultImageBuilder implements ImageBuilder {
         }
     }
 
-    private void accept(ModuleEntry file) throws IOException {
-        String fullPath = file.getPath();
-        String module = "/" + file.getModule() + "/";
-        String filename = fullPath.substring(module.length());
+    /**
+     * Returns the file name of this entry
+     */
+    private String entryToFileName(ResourcePoolEntry entry) {
+        if (entry.type() == ResourcePoolEntry.Type.CLASS_OR_RESOURCE)
+            throw new IllegalArgumentException("invalid type: " + entry);
+
+        String module = "/" + entry.moduleName() + "/";
+        String filename = entry.path().substring(module.length());
         // Remove radical native|config|...
-        filename = filename.substring(filename.indexOf('/') + 1);
-        try (InputStream in = file.stream()) {
-            switch (file.getType()) {
+        return filename.substring(filename.indexOf('/') + 1);
+    }
+
+    /**
+     * Returns the path of the given entry to be written in the image
+     */
+    private Path entryToImagePath(ResourcePoolEntry entry) {
+        switch (entry.type()) {
+            case NATIVE_LIB:
+                String filename = entryToFileName(entry);
+                return Paths.get(nativeDir(filename), filename);
+            case NATIVE_CMD:
+                return Paths.get("bin", entryToFileName(entry));
+            case CONFIG:
+                return Paths.get("conf", entryToFileName(entry));
+            case HEADER_FILE:
+                return Paths.get("include", entryToFileName(entry));
+            case MAN_PAGE:
+                return Paths.get("man", entryToFileName(entry));
+            case TOP:
+                return Paths.get(entryToFileName(entry));
+            case OTHER:
+                return Paths.get("other", entryToFileName(entry));
+            default:
+                throw new IllegalArgumentException("invalid type: " + entry);
+        }
+    }
+
+    private void accept(ResourcePoolEntry file) throws IOException {
+        try (InputStream in = file.content()) {
+            switch (file.type()) {
                 case NATIVE_LIB:
-                    writeEntry(in, destFile(nativeDir(filename), filename));
+                    Path dest = root.resolve(entryToImagePath(file));
+                    writeEntry(in, dest);
                     break;
                 case NATIVE_CMD:
-                    Path path = destFile("bin", filename);
-                    writeEntry(in, path);
-                    path.toFile().setExecutable(true);
+                    Path p = root.resolve(entryToImagePath(file));
+                    writeEntry(in, p);
+                    p.toFile().setExecutable(true);
                     break;
                 case CONFIG:
-                    writeEntry(in, destFile("conf", filename));
+                    writeEntry(in, root.resolve(entryToImagePath(file)));
+                    break;
+                case HEADER_FILE:
+                    writeEntry(in, root.resolve(entryToImagePath(file)));
+                    break;
+                case MAN_PAGE:
+                    writeEntry(in, root.resolve(entryToImagePath(file)));
+                    break;
+                case TOP:
                     break;
                 case OTHER:
+                    String filename = entryToFileName(file);
                     if (file instanceof SymImageFile) {
                         SymImageFile sym = (SymImageFile) file;
                         Path target = root.resolve(sym.getTargetPath());
@@ -331,13 +442,9 @@ public final class DefaultImageBuilder implements ImageBuilder {
                     }
                     break;
                 default:
-                    throw new InternalError("unexpected entry: " + fullPath);
+                    throw new InternalError("unexpected entry: " + file.path());
             }
         }
-    }
-
-    private Path destFile(String dir, String filename) {
-        return root.resolve(dir).resolve(filename);
     }
 
     private void writeEntry(InputStream in, Path dstFile) throws IOException {
@@ -354,7 +461,7 @@ public final class DefaultImageBuilder implements ImageBuilder {
         Files.createLink(dstFile, target);
     }
 
-    private static String nativeDir(String filename) {
+    private String nativeDir(String filename) {
         if (isWindows()) {
             if (filename.endsWith(".dll") || filename.endsWith(".diz")
                     || filename.endsWith(".pdb") || filename.endsWith(".map")) {
@@ -367,8 +474,8 @@ public final class DefaultImageBuilder implements ImageBuilder {
         }
     }
 
-    private static boolean isWindows() {
-        return System.getProperty("os.name").startsWith("Windows");
+    private boolean isWindows() {
+        return targetOsName.startsWith("Windows");
     }
 
     /**
@@ -433,12 +540,10 @@ public final class DefaultImageBuilder implements ImageBuilder {
         }
     }
 
-    private static String getJavaProcessName() {
-        return isWindows() ? "java.exe" : "java";
-    }
-
     public static ExecutableImage getExecutableImage(Path root) {
-        if (Files.exists(root.resolve("bin").resolve(getJavaProcessName()))) {
+        Path binDir = root.resolve("bin");
+        if (Files.exists(binDir.resolve("java")) ||
+            Files.exists(binDir.resolve("java.exe"))) {
             return new DefaultExecutableImage(root, retrieveModules(root));
         }
         return null;

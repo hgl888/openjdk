@@ -28,6 +28,7 @@ package jdk.nashorn.internal.parser;
 import java.util.ArrayList;
 import java.util.List;
 
+import jdk.nashorn.internal.ir.IdentNode;
 import jdk.nashorn.internal.ir.Module;
 import jdk.nashorn.internal.ir.Module.ExportEntry;
 import jdk.nashorn.internal.ir.Module.ImportEntry;
@@ -40,11 +41,11 @@ class ParserContextModuleNode extends ParserContextBaseNode {
     /** Module name. */
     private final String name;
 
-    private List<String> requestedModules = new ArrayList<>();
-    private List<ImportEntry> importEntries = new ArrayList<>();
-    private List<ExportEntry> localExportEntries = new ArrayList<>();
-    private List<ExportEntry> indirectExportEntries = new ArrayList<>();
-    private List<ExportEntry> starExportEntries = new ArrayList<>();
+    private final List<String> requestedModules = new ArrayList<>();
+    private final List<ImportEntry> importEntries = new ArrayList<>();
+    private final List<ExportEntry> localExportEntries = new ArrayList<>();
+    private final List<ExportEntry> indirectExportEntries = new ArrayList<>();
+    private final List<ExportEntry> starExportEntries = new ArrayList<>();
 
     /**
      * Constructor.
@@ -64,8 +65,8 @@ class ParserContextModuleNode extends ParserContextBaseNode {
         return name;
     }
 
-    public void addModuleRequest(final String moduleRequest) {
-        requestedModules.add(moduleRequest);
+    public void addModuleRequest(final IdentNode moduleRequest) {
+        requestedModules.add(moduleRequest.getName());
     }
 
     public void addImportEntry(final ImportEntry importEntry) {

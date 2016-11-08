@@ -217,7 +217,7 @@ public final class URLPermission extends Permission {
      * where method-names is the list of methods separated by commas
      * and header-names is the list of permitted headers separated by commas.
      * There is no white space in the returned String. If header-names is empty
-     * then the colon separator will not be present.
+     * then the colon separator may not be present.
      */
     public String getActions() {
         return actions;
@@ -265,8 +265,14 @@ public final class URLPermission extends Permission {
 
         URLPermission that = (URLPermission)p;
 
-        if (!this.methods.get(0).equals("*") &&
-                Collections.indexOfSubList(this.methods, that.methods) == -1) {
+        if (this.methods.isEmpty() && !that.methods.isEmpty()) {
+            return false;
+        }
+
+        if (!this.methods.isEmpty() &&
+            !this.methods.get(0).equals("*") &&
+            Collections.indexOfSubList(this.methods,
+                                       that.methods) == -1) {
             return false;
         }
 
@@ -455,15 +461,10 @@ public final class URLPermission extends Permission {
     }
 
     private String actions() {
-        StringBuilder b = new StringBuilder();
-        for (String s : methods) {
-            b.append(s);
-        }
-        b.append(":");
-        for (String s : requestHeaders) {
-            b.append(s);
-        }
-        return b.toString();
+        // The colon separator is optional when the request headers list is
+        // empty.This implementation chooses to include it even when the request
+        // headers list is empty.
+        return String.join(",", methods) + ":" + String.join(",", requestHeaders);
     }
 
     /**

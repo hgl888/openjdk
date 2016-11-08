@@ -55,6 +55,7 @@ import com.sun.tools.javac.file.BaseFileManager;
 import com.sun.tools.javac.file.PathFileObject;
 import com.sun.tools.javac.jvm.ClassFile.NameAndType;
 import com.sun.tools.javac.jvm.ClassFile.Version;
+import com.sun.tools.javac.main.Option;
 import com.sun.tools.javac.util.*;
 import com.sun.tools.javac.util.DefinedBy.Api;
 import com.sun.tools.javac.util.JCDiagnostic.DiagnosticPosition;
@@ -67,7 +68,7 @@ import static com.sun.tools.javac.code.TypeTag.TYPEVAR;
 import static com.sun.tools.javac.jvm.ClassFile.*;
 import static com.sun.tools.javac.jvm.ClassFile.Version.*;
 
-import static com.sun.tools.javac.main.Option.*;
+import static com.sun.tools.javac.main.Option.PARAMETERS;
 
 /** This class provides operations to read a classfile into an internal
  *  representation. The internal representation is anchored in a
@@ -236,13 +237,13 @@ public class ClassReader {
         log = Log.instance(context);
 
         Options options = Options.instance(context);
-        verbose         = options.isSet(VERBOSE);
+        verbose         = options.isSet(Option.VERBOSE);
 
         Source source = Source.instance(context);
         allowSimplifiedVarargs = source.allowSimplifiedVarargs();
         allowModules     = source.allowModules();
 
-        saveParameterNames = options.isSet("save-parameter-names");
+        saveParameterNames = options.isSet(PARAMETERS);
 
         profile = Profile.instance(context);
 
@@ -565,6 +566,11 @@ public class ClassReader {
      * class name is of the form module-name.module-info.
      */
     Name readModuleInfoName(int i) {
+        if (majorVersion < Version.V53.major) {
+            throw badClassFile("anachronistic.module.info",
+                    Integer.toString(majorVersion),
+                    Integer.toString(minorVersion));
+        }
         int classIndex = poolIdx[i];
         if (buf[classIndex] == CONSTANT_Class) {
             int utf8Index = poolIdx[getChar(classIndex + 1)];
@@ -1039,7 +1045,8 @@ public class ClassReader {
                             if (start_pc == 0) {
                                 // ensure array large enough
                                 if (register >= parameterNameIndices.length) {
-                                    int newSize = Math.max(register, parameterNameIndices.length + 8);
+                                    int newSize =
+                                            Math.max(register + 1, parameterNameIndices.length + 8);
                                     parameterNameIndices =
                                             Arrays.copyOf(parameterNameIndices, newSize);
                                 }
@@ -1453,7 +1460,6 @@ public class ClassReader {
             ListBuffer<CompoundAnnotationProxy> proxies = new ListBuffer<>();
             for (int i = 0; i<numAttributes; i++) {
                 CompoundAnnotationProxy proxy = readCompoundAnnotation();
-
                 if (proxy.type.tsym == syms.proprietaryType.tsym)
                     sym.flags_field |= PROPRIETARY;
                 else if (proxy.type.tsym == syms.profileType.tsym) {
@@ -1472,6 +1478,16 @@ public class ClassReader {
                         target = proxy;
                     } else if (proxy.type.tsym == syms.repeatableType.tsym) {
                         repeatable = proxy;
+                    } else if (proxy.type.tsym == syms.deprecatedType.tsym) {
+                        sym.flags_field |= DEPRECATED;
+                        for (Pair<Name, Attribute> v : proxy.values) {
+                            if (v.fst == names.forRemoval && v.snd instanceof Attribute.Constant) {
+                                Attribute.Constant c = (Attribute.Constant) v.snd;
+                                if (c.type == syms.booleanType && ((Integer) c.value) != 0) {
+                                    sym.flags_field |= DEPRECATED_REMOVAL;
+                                }
+                            }
+                        }
                     }
 
                     proxies.append(proxy);
@@ -2389,12 +2405,15 @@ public class ClassReader {
         } else {
             c.flags_field = flags;
             Name modInfoName = readModuleInfoName(nextChar());
-            if (c.owner.name == null) {
-                syms.enterModule((ModuleSymbol) c.owner, Convert.packagePart(modInfoName));
-            } else {
-                // TODO: validate name
-            }
             currentModule = (ModuleSymbol) c.owner;
+            if (currentModule.name.append('.', names.module_info) != modInfoName) {
+                //strip trailing .module-info, if exists:
+                int modInfoStart = modInfoName.length() - names.module_info.length();
+                modInfoName = modInfoName.subName(modInfoStart, modInfoName.length()) == names.module_info &&
+                              modInfoName.charAt(modInfoStart - 1) == '.' ?
+                                  modInfoName.subName(0, modInfoStart - 1) : modInfoName;
+                throw badClassFile("module.name.mismatch", modInfoName, currentModule.name);
+            }
         }
 
         // class attributes must be read before class
@@ -2417,6 +2436,9 @@ public class ClassReader {
         // reset and read rest of classinfo
         bp = startbp;
         int n = nextChar();
+        if ((flags & MODULE) != 0 && n > 0) {
+            throw badClassFile("module.info.invalid.super.class");
+        }
         if (ct.supertype_field == null)
             ct.supertype_field = (n == 0)
                 ? Type.noType

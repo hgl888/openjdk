@@ -23,6 +23,10 @@
  * questions.
  */
 
+/** Defines the implementation of the
+ *  {@link javax.tools.ToolProvider#getSystemDocumentationTool system documentation tool}
+ *  and its command line equivalent, <em>javadoc</em>.
+ */
 module jdk.javadoc {
     requires public java.compiler;
     requires public jdk.compiler;
@@ -30,9 +34,15 @@ module jdk.javadoc {
 
     exports com.sun.javadoc;
     exports com.sun.tools.doclets;
+    exports com.sun.tools.doclets.standard;
     exports com.sun.tools.javadoc;
+
     exports jdk.javadoc.doclet;
     exports jdk.javadoc.doclet.taglet;
+    exports jdk.javadoc.doclets;
+
+    provides java.util.spi.ToolProvider
+        with jdk.javadoc.internal.tool.JavadocToolProvider;
 
     provides javax.tools.DocumentationTool
         with jdk.javadoc.internal.api.JavadocTool;

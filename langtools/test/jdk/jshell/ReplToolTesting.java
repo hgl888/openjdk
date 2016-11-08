@@ -93,6 +93,7 @@ public class ReplToolTesting {
     private Map<String, ImportInfo> imports;
     private boolean isDefaultStartUp = true;
     private Preferences prefs;
+    private Map<String, String> envvars;
 
     public JShellTool repl = null;
 
@@ -232,6 +233,11 @@ public class ReplToolTesting {
     @BeforeMethod
     public void setUp() {
         prefs = new MemoryPreferences();
+        envvars = new HashMap<>();
+    }
+
+    protected void setEnvVar(String name, String value) {
+        envvars.put(name, value);
     }
 
     public void testRaw(Locale locale, String[] args, ReplTest... tests) {
@@ -251,6 +257,7 @@ public class ReplToolTesting {
                 new PrintStream(userout),
                 new PrintStream(usererr),
                 prefs,
+                envvars,
                 locale);
         repl.testPrompt = true;
         try {
@@ -463,15 +470,16 @@ public class ReplToolTesting {
 
     private List<String> computeCompletions(String code, boolean isSmart) {
         JShellTool js = this.repl != null ? this.repl
-                                      : new JShellTool(null, null, null, null, null, null, null, prefs, Locale.ROOT);
+                                      : new JShellTool(null, null, null, null, null, null, null,
+                                              prefs, envvars, Locale.ROOT);
         int cursor =  code.indexOf('|');
         code = code.replace("|", "");
         assertTrue(cursor > -1, "'|' not found: " + code);
         List<Suggestion> completions =
                 js.commandCompletionSuggestions(code, cursor, new int[1]); //XXX: ignoring anchor for now
         return completions.stream()
-                          .filter(s -> isSmart == s.isSmart)
-                          .map(s -> s.continuation)
+                          .filter(s -> isSmart == s.matchesType())
+                          .map(s -> s.continuation())
                           .distinct()
                           .collect(Collectors.toList());
     }

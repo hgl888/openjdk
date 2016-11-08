@@ -51,11 +51,12 @@ case "$OS" in
     ;;
 esac
 
-EXTRAOPTS="-XaddExports:java.base/sun.net.www=ALL-UNNAMED"
+EXTRAOPTS="--add-exports java.base/sun.net.www=ALL-UNNAMED"
 ${COMPILEJAVA}${FS}bin${FS}javac ${TESTJAVACOPTS} ${TESTTOOLVMOPTS} ${EXTRAOPTS} \
     -d . ${TESTSRC}${FS}OriginServer.java \
     ${TESTSRC}${FS}ProxyTunnelServer.java \
     ${TESTSRC}${FS}PostThruProxyWithAuth.java
 ${TESTJAVA}${FS}bin${FS}java ${TESTVMOPTS} ${EXTRAOPTS} \
+    -Djdk.http.auth.tunneling.disabledSchemes= \
     PostThruProxyWithAuth ${HOSTNAME} ${TESTSRC}
 exit

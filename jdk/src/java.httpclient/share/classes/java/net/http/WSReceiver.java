@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,6 +22,7 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
+
 package java.net.http;
 
 import java.io.IOException;
@@ -29,6 +30,7 @@ import java.io.UncheckedIOException;
 import java.net.ProtocolException;
 import java.net.http.WebSocket.Listener;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.channels.SelectionKey;
 import java.util.Optional;
 import java.util.concurrent.CompletionStage;
@@ -52,7 +54,7 @@ final class WSReceiver {
     private final Supplier<WSShared<ByteBuffer>> buffersSupplier =
             new WSSharedPool<>(() -> ByteBuffer.allocateDirect(32768), 2);
     private final RawChannel channel;
-    private final RawChannel.NonBlockingEvent channelEvent;
+    private final RawChannel.RawEvent channelEvent;
     private final WSSignalHandler handler;
     private final AtomicLong demand = new AtomicLong();
     private final AtomicBoolean readable = new AtomicBoolean();
@@ -100,11 +102,10 @@ final class WSReceiver {
         }
     }
 
-    long request(long n) {
+    void request(long n) {
         long newDemand = demand.accumulateAndGet(n, (p, i) -> p + i < 0 ? Long.MAX_VALUE : p + i);
         handler.signal();
         assert newDemand >= 0 : newDemand;
-        return newDemand;
     }
 
     private boolean getData() throws IOException {
@@ -169,11 +170,11 @@ final class WSReceiver {
     private final class MessageConsumer implements WSMessageConsumer {
 
         @Override
-        public void onText(WebSocket.MessagePart part, WSDisposableText data) {
+        public void onText(WebSocket.MessagePart part, WSShared<CharBuffer> data) {
             decrementDemand();
             CompletionStage<?> cs;
             try {
-                cs = listener.onText(webSocket, data, part);
+                cs = listener.onText(webSocket, data.buffer(), part);
             } catch (Exception e) {
                 closeExceptionally(new RuntimeException("onText threw an exception", e));
                 return;
@@ -251,8 +252,8 @@ final class WSReceiver {
         assert newDemand >= 0 : newDemand;
     }
 
-    private RawChannel.NonBlockingEvent createChannelEvent() {
-        return new RawChannel.NonBlockingEvent() {
+    private RawChannel.RawEvent createChannelEvent() {
+        return new RawChannel.RawEvent() {
 
             @Override
             public int interestOps() {

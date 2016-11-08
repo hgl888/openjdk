@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1997, 2016, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2015 SAP SE. All rights reserved.
+ * Copyright (c) 2012, 2016 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,7 +24,7 @@
  */
 
 // no precompiled headers
-#include "assembler_ppc.inline.hpp"
+#include "asm/assembler.inline.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmSymbols.hpp"
@@ -34,7 +34,6 @@
 #include "interpreter/interpreter.hpp"
 #include "jvm_linux.h"
 #include "memory/allocation.inline.hpp"
-#include "mutex_linux.inline.hpp"
 #include "nativeInst_ppc.hpp"
 #include "os_share_linux.hpp"
 #include "prims/jniFastGetField.hpp"
@@ -157,6 +156,42 @@ frame os::fetch_frame_from_context(const void* ucVoid) {
   return frame(sp, epc.pc());
 }
 
+bool os::Linux::get_frame_at_stack_banging_point(JavaThread* thread, ucontext_t* uc, frame* fr) {
+  address pc = (address) os::Linux::ucontext_get_pc(uc);
+  if (Interpreter::contains(pc)) {
+    // Interpreter performs stack banging after the fixed frame header has
+    // been generated while the compilers perform it before. To maintain
+    // semantic consistency between interpreted and compiled frames, the
+    // method returns the Java sender of the current frame.
+    *fr = os::fetch_frame_from_context(uc);
+    if (!fr->is_first_java_frame()) {
+      assert(fr->safe_for_sender(thread), "Safety check");
+      *fr = fr->java_sender();
+    }
+  } else {
+    // More complex code with compiled code.
+    assert(!Interpreter::contains(pc), "Interpreted methods should have been handled above");
+    CodeBlob* cb = CodeCache::find_blob(pc);
+    if (cb == NULL || !cb->is_nmethod() || cb->is_frame_complete_at(pc)) {
+      // Not sure where the pc points to, fallback to default
+      // stack overflow handling. In compiled code, we bang before
+      // the frame is complete.
+      return false;
+    } else {
+      intptr_t* fp = os::Linux::ucontext_get_fp(uc);
+      intptr_t* sp = os::Linux::ucontext_get_sp(uc);
+      *fr = frame(sp, (address)*sp);
+      if (!fr->is_java_frame()) {
+        assert(fr->safe_for_sender(thread), "Safety check");
+        assert(!fr->is_first_frame(), "Safety check");
+        *fr = fr->java_sender();
+      }
+    }
+  }
+  assert(fr->is_java_frame(), "Safety check");
+  return true;
+}
+
 frame os::get_sender_for_C_frame(frame* fr) {
   if (*fr->sp() == 0) {
     // fr is the last C frame
@@ -170,8 +205,10 @@ frame os::current_frame() {
   intptr_t* csp = (intptr_t*) *((intptr_t*) os::current_stack_pointer());
   // hack.
   frame topframe(csp, (address)0x8);
-  // return sender of current topframe which hopefully has pc != NULL.
-  return os::get_sender_for_C_frame(&topframe);
+  // Return sender of sender of current topframe which hopefully
+  // both have pc != NULL.
+  frame tmp = os::get_sender_for_C_frame(&topframe);
+  return os::get_sender_for_C_frame(&tmp);
 }
 
 // Utility functions
@@ -199,6 +236,28 @@ JVM_handle_linux_signal(int sig,
       return true;
     } else {
       // Ignoring SIGPIPE - see bugs 4229104
+      return true;
+    }
+  }
+
+  // Make the signal handler transaction-aware by checking the existence of a
+  // second (transactional) context with MSR TS bits active. If the signal is
+  // caught during a transaction, then just return to the HTM abort handler.
+  // Please refer to Linux kernel document powerpc/transactional_memory.txt,
+  // section "Signals".
+  if (uc && uc->uc_link) {
+    ucontext_t* second_uc = uc->uc_link;
+
+    // MSR TS bits are 29 and 30 (Power ISA, v2.07B, Book III-S, pp. 857-858,
+    // 3.2.1 "Machine State Register"), however note that ISA notation for bit
+    // numbering is MSB 0, so for normal bit numbering (LSB 0) they come to be
+    // bits 33 and 34. It's not related to endianness, just a notation matter.
+    if (second_uc->uc_mcontext.regs->msr & 0x600000000) {
+      if (TraceTraps) {
+        tty->print_cr("caught signal in transaction, "
+                        "ignoring to jump to abort handler");
+      }
+      // Return control to the HTM abort handler.
       return true;
     }
   }
@@ -243,13 +302,31 @@ JVM_handle_linux_signal(int sig,
       if (thread->on_local_stack(addr)) {
         // stack overflow
         if (thread->in_stack_yellow_reserved_zone(addr)) {
-          thread->disable_stack_yellow_reserved_zone();
           if (thread->thread_state() == _thread_in_Java) {
+            if (thread->in_stack_reserved_zone(addr)) {
+              frame fr;
+              if (os::Linux::get_frame_at_stack_banging_point(thread, uc, &fr)) {
+                assert(fr.is_java_frame(), "Must be a Javac frame");
+                frame activation =
+                  SharedRuntime::look_for_reserved_stack_annotated_method(thread, fr);
+                if (activation.sp() != NULL) {
+                  thread->disable_stack_reserved_zone();
+                  if (activation.is_interpreted_frame()) {
+                    thread->set_reserved_stack_activation((address)activation.fp());
+                  } else {
+                    thread->set_reserved_stack_activation((address)activation.unextended_sp());
+                  }
+                  return 1;
+                }
+              }
+            }
             // Throw a stack overflow exception.
             // Guard pages will be reenabled while unwinding the stack.
+            thread->disable_stack_yellow_reserved_zone();
             stub = SharedRuntime::continuation_for_implicit_exception(thread, pc, SharedRuntime::STACK_OVERFLOW);
           } else {
             // Thread was in the vm or native code. Return and try to finish.
+            thread->disable_stack_yellow_reserved_zone();
             return 1;
           }
         } else if (thread->in_stack_red_zone(addr)) {
@@ -458,15 +535,13 @@ void os::Linux::set_fpu_control_word(int fpu_control) {
 ////////////////////////////////////////////////////////////////////////////////
 // thread stack
 
-size_t os::Linux::min_stack_allowed = 128*K;
+size_t os::Posix::_compiler_thread_min_stack_allowed = 128 * K;
+size_t os::Posix::_java_thread_min_stack_allowed = 128 * K;
+size_t os::Posix::_vm_internal_thread_min_stack_allowed = 128 * K;
 
 // return default stack size for thr_type
-size_t os::Linux::default_stack_size(os::ThreadType thr_type) {
+size_t os::Posix::default_stack_size(os::ThreadType thr_type) {
   // default stack size (compiler thread needs larger stack)
-  // Notice that the setting for compiler threads here have no impact
-  // because of the strange 'fallback logic' in os::create_thread().
-  // Better set CompilerThreadStackSize in globals_<os_cpu>.hpp if you want to
-  // specify a different stack size for compiler threads!
   size_t s = (thr_type == os::compiler_thread ? 4 * M : 1024 * K);
   return s;
 }

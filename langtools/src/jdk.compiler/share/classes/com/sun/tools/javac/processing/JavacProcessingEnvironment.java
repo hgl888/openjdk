@@ -26,7 +26,6 @@
 package com.sun.tools.javac.processing;
 
 import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -63,6 +62,7 @@ import com.sun.tools.javac.comp.Env;
 import com.sun.tools.javac.comp.Modules;
 import com.sun.tools.javac.file.JavacFileManager;
 import com.sun.tools.javac.main.JavaCompiler;
+import com.sun.tools.javac.main.Option;
 import com.sun.tools.javac.model.JavacElements;
 import com.sun.tools.javac.model.JavacTypes;
 import com.sun.tools.javac.platform.PlatformDescription;
@@ -79,6 +79,7 @@ import com.sun.tools.javac.util.DefinedBy;
 import com.sun.tools.javac.util.DefinedBy.Api;
 import com.sun.tools.javac.util.Iterators;
 import com.sun.tools.javac.util.JCDiagnostic;
+import com.sun.tools.javac.util.JDK9Wrappers.Module;
 import com.sun.tools.javac.util.JavacMessages;
 import com.sun.tools.javac.util.List;
 import com.sun.tools.javac.util.Log;
@@ -90,7 +91,6 @@ import com.sun.tools.javac.util.Options;
 
 import static com.sun.tools.javac.code.Lint.LintCategory.PROCESSING;
 import static com.sun.tools.javac.code.Kinds.Kind.*;
-import static com.sun.tools.javac.main.Option.*;
 import static com.sun.tools.javac.comp.CompileStates.CompileState;
 import static com.sun.tools.javac.util.JCDiagnostic.DiagnosticFlag.*;
 
@@ -120,7 +120,6 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
     private final JavacTypes typeUtils;
     private final JavaCompiler compiler;
     private final Modules modules;
-    private final ModuleHelper moduleHelper;
     private final Types types;
 
     /**
@@ -197,17 +196,17 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
         source = Source.instance(context);
         diags = JCDiagnostic.Factory.instance(context);
         options = Options.instance(context);
-        printProcessorInfo = options.isSet(XPRINTPROCESSORINFO);
-        printRounds = options.isSet(XPRINTROUNDS);
-        verbose = options.isSet(VERBOSE);
+        printProcessorInfo = options.isSet(Option.XPRINTPROCESSORINFO);
+        printRounds = options.isSet(Option.XPRINTROUNDS);
+        verbose = options.isSet(Option.VERBOSE);
         lint = Lint.instance(context).isEnabled(PROCESSING);
         compiler = JavaCompiler.instance(context);
-        if (options.isSet(PROC, "only") || options.isSet(XPRINT)) {
+        if (options.isSet(Option.PROC, "only") || options.isSet(Option.XPRINT)) {
             compiler.shouldStopPolicyIfNoError = CompileState.PROCESS;
         }
         fatalErrors = options.isSet("fatalEnterError");
         showResolveErrors = options.isSet("showResolveErrors");
-        werror = options.isSet(WERROR);
+        werror = options.isSet(Option.WERROR);
         fileManager = context.get(JavaFileManager.class);
         platformAnnotations = initPlatformAnnotations();
 
@@ -228,7 +227,6 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
         enter = Enter.instance(context);
         initialCompleter = ClassFinder.instance(context).getCompleter();
         chk = Check.instance(context);
-        moduleHelper = ModuleHelper.instance(context);
         initProcessorLoader();
 
         defaultModule = source.allowModules() && options.isUnset("noModules")
@@ -266,7 +264,8 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
                     ? fileManager.getClassLoader(ANNOTATION_PROCESSOR_PATH)
                     : fileManager.getClassLoader(CLASS_PATH);
 
-                moduleHelper.addExports(processorClassLoader);
+                if (options.isSet("accessInternalAPI"))
+                    ModuleHelper.addExports(Module.getModule(getClass()), Module.getUnnamedModule(processorClassLoader));
 
                 if (processorClassLoader != null && processorClassLoader instanceof Closeable) {
                     compiler.closeables = compiler.closeables.prepend((Closeable) processorClassLoader);
@@ -280,11 +279,9 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
     private void initProcessorIterator(Iterable<? extends Processor> processors) {
         Iterator<? extends Processor> processorIterator;
 
-        if (options.isSet(XPRINT)) {
+        if (options.isSet(Option.XPRINT)) {
             try {
-                @SuppressWarnings("deprecation")
-                Processor processor = PrintingProcessor.class.newInstance();
-                processorIterator = List.of(processor).iterator();
+                processorIterator = List.of(new PrintingProcessor()).iterator();
             } catch (Throwable t) {
                 AssertionError assertError =
                     new AssertionError("Problem instantiating PrintingProcessor.");
@@ -300,7 +297,7 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
                  * path for the named class.  Otherwise, use a service
                  * provider mechanism to create the processor iterator.
                  */
-                String processorNames = options.get(PROCESSOR);
+                String processorNames = options.get(Option.PROCESSOR);
                 if (fileManager.hasLocation(ANNOTATION_PROCESSOR_MODULE_PATH)) {
                     processorIterator = (processorNames == null) ?
                             new ServiceIterator(serviceLoader, log) :
@@ -366,7 +363,7 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
                 ? standardFileManager.getLocationAsPaths(ANNOTATION_PROCESSOR_PATH)
                 : standardFileManager.getLocationAsPaths(CLASS_PATH);
 
-            if (needClassLoader(options.get(PROCESSOR), workingPath) )
+            if (needClassLoader(options.get(Option.PROCESSOR), workingPath) )
                 handleException(key, e);
 
         } else {
@@ -540,38 +537,40 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
             if (nextProc != null)
                 return true;
             else {
-                if (!names.hasNext())
+                if (!names.hasNext()) {
                     return false;
-                else {
-                    String processorName = names.next();
-
-                    Processor processor;
-                    try {
-                        try {
-                            Class<?> processorClass = processorCL.loadClass(processorName);
-                            ensureReadable(processorClass);
-                            @SuppressWarnings("deprecation")
-                            Object tmp = processorClass.newInstance();
-                            processor = (Processor) tmp;
-                        } catch (ClassNotFoundException cnfe) {
-                            log.error("proc.processor.not.found", processorName);
-                            return false;
-                        } catch (ClassCastException cce) {
-                            log.error("proc.processor.wrong.type", processorName);
-                            return false;
-                        } catch (Exception e ) {
-                            log.error("proc.processor.cant.instantiate", processorName);
-                            return false;
-                        }
-                    } catch(ClientCodeException e) {
-                        throw e;
-                    } catch(Throwable t) {
-                        throw new AnnotationProcessingError(t);
+                } else {
+                    Processor processor = getNextProcessor(names.next());
+                    if (processor == null) {
+                        return false;
+                    } else {
+                        nextProc = processor;
+                        return true;
                     }
-                    nextProc = processor;
-                    return true;
                 }
+            }
+        }
 
+        private Processor getNextProcessor(String processorName) {
+            try {
+                try {
+                    Class<?> processorClass = processorCL.loadClass(processorName);
+                    ensureReadable(processorClass);
+                    return (Processor) processorClass.getConstructor().newInstance();
+                } catch (ClassNotFoundException cnfe) {
+                    log.error("proc.processor.not.found", processorName);
+                    return null;
+                } catch (ClassCastException cce) {
+                    log.error("proc.processor.wrong.type", processorName);
+                    return null;
+                } catch (Exception e ) {
+                    log.error("proc.processor.cant.instantiate", processorName);
+                    return null;
+                }
+            } catch (ClientCodeException e) {
+                throw e;
+            } catch (Throwable t) {
+                throw new AnnotationProcessingError(t);
             }
         }
 
@@ -1337,8 +1336,7 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
 
         errorStatus = errorStatus || (compiler.errorCount() > 0);
 
-        if (!errorStatus)
-            round.finalCompiler();
+        round.finalCompiler();
 
         if (newSourceFiles.size() > 0)
             roots = roots.appendList(compiler.parseFiles(newSourceFiles));
@@ -1351,10 +1349,8 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
         if (!taskListener.isEmpty())
             taskListener.finished(new TaskEvent(TaskEvent.Kind.ANNOTATION_PROCESSING));
 
-        if (errorStatus) {
-            if (compiler.errorCount() == 0)
-                compiler.log.nerrors++;
-            return true;
+        if (errorStatus && compiler.errorCount() == 0) {
+            compiler.log.nerrors++;
         }
 
         compiler.enterTreesIfNeeded(roots);
@@ -1504,14 +1500,35 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
                 }
             }
             public void visitClassDef(JCClassDecl node) {
+                super.visitClassDef(node);
+                // remove generated constructor that may have been added during attribution:
+                List<JCTree> beforeConstructor = List.nil();
+                List<JCTree> defs = node.defs;
+                while (defs.nonEmpty() && !defs.head.hasTag(Tag.METHODDEF)) {
+                    beforeConstructor = beforeConstructor.prepend(defs.head);
+                    defs = defs.tail;
+                }
+                if (defs.nonEmpty() &&
+                    (((JCMethodDecl) defs.head).mods.flags & Flags.GENERATEDCONSTR) != 0) {
+                    defs = defs.tail;
+                    while (beforeConstructor.nonEmpty()) {
+                        defs = defs.prepend(beforeConstructor.head);
+                        beforeConstructor = beforeConstructor.tail;
+                    }
+                    node.defs = defs;
+                }
                 if (node.sym != null) {
-                    node.sym.reset();
                     node.sym.completer = new ImplicitCompleter(topLevel);
                 }
                 node.sym = null;
-                super.visitClassDef(node);
             }
             public void visitMethodDef(JCMethodDecl node) {
+                // remove super constructor call that may have been added during attribution:
+                if (TreeInfo.isConstructor(node) && node.sym != null && node.sym.owner.isEnum() &&
+                    node.body.stats.nonEmpty() && TreeInfo.isSuperCall(node.body.stats.head) &&
+                    node.body.stats.head.pos == node.body.pos) {
+                    node.body.stats = node.body.stats.tail;
+                }
                 node.sym = null;
                 super.visitMethodDef(node);
             }
@@ -1604,7 +1621,7 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
 
     /**
      * Convert import-style string for supported annotations into a
-     * regex matching that string.  If the string is a valid
+     * regex matching that string.  If the string is not a valid
      * import-style string, return a regex that won't match anything.
      */
     private static Pattern importStringToPattern(String s, Processor p, Log log) {

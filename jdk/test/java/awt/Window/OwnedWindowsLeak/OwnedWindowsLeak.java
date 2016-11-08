@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2008, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,19 +23,18 @@
 
 /*
   @test
+  @key headful
   @bug 6758673
   @summary Tests that windows are removed from owner's child windows list
   @author art: area=awt.toplevel
-  @run main OwnedWindowsLeak
+  @run main/othervm -mx128m OwnedWindowsLeak
 */
 
-import java.awt.*;
-import java.awt.event.*;
-
-import java.lang.ref.*;
-import java.lang.reflect.*;
-
-import java.util.*;
+import java.awt.Frame;
+import java.awt.Window;
+import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
+import java.util.Vector;
 
 public class OwnedWindowsLeak
 {

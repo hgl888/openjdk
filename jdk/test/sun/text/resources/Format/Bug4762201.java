@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,14 +22,17 @@
  */
 
 /*
- *@test
- *@bug 4762201
- *@summary verify the zh_CN full time pattern (and other time patterns)
-*/
+ * @test
+ * @bug 4762201
+ * @modules jdk.localedata
+ * @summary verify the zh_CN full time pattern (and other time patterns)
+ * @run main/othervm -Djava.locale.providers=COMPAT,SPI Bug4762201
+ */
 
-import java.io.*;
-import java.text.*;
-import java.util.*;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 public class Bug4762201
 {

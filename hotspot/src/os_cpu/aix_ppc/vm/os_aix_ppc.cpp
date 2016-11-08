@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1997, 2016, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2014 SAP SE. All rights reserved.
+ * Copyright (c) 2012, 2016 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,7 +24,7 @@
  */
 
 // no precompiled headers
-#include "assembler_ppc.inline.hpp"
+#include "asm/assembler.inline.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmSymbols.hpp"
@@ -34,7 +34,6 @@
 #include "interpreter/interpreter.hpp"
 #include "jvm_aix.h"
 #include "memory/allocation.inline.hpp"
-#include "mutex_aix.inline.hpp"
 #include "nativeInst_ppc.hpp"
 #include "os_share_aix.hpp"
 #include "prims/jniFastGetField.hpp"
@@ -145,6 +144,41 @@ frame os::fetch_frame_from_context(const void* ucVoid) {
   return fr;
 }
 
+bool os::Aix::get_frame_at_stack_banging_point(JavaThread* thread, ucontext_t* uc, frame* fr) {
+  address pc = (address) os::Aix::ucontext_get_pc(uc);
+  if (Interpreter::contains(pc)) {
+    // Interpreter performs stack banging after the fixed frame header has
+    // been generated while the compilers perform it before. To maintain
+    // semantic consistency between interpreted and compiled frames, the
+    // method returns the Java sender of the current frame.
+    *fr = os::fetch_frame_from_context(uc);
+    if (!fr->is_first_java_frame()) {
+      assert(fr->safe_for_sender(thread), "Safety check");
+      *fr = fr->java_sender();
+    }
+  } else {
+    // More complex code with compiled code.
+    assert(!Interpreter::contains(pc), "Interpreted methods should have been handled above");
+    CodeBlob* cb = CodeCache::find_blob(pc);
+    if (cb == NULL || !cb->is_nmethod() || cb->is_frame_complete_at(pc)) {
+      // Not sure where the pc points to, fallback to default
+      // stack overflow handling. In compiled code, we bang before
+      // the frame is complete.
+      return false;
+    } else {
+      intptr_t* sp = os::Aix::ucontext_get_sp(uc);
+      *fr = frame(sp, (address)*sp);
+      if (!fr->is_java_frame()) {
+        assert(fr->safe_for_sender(thread), "Safety check");
+        assert(!fr->is_first_frame(), "Safety check");
+        *fr = fr->java_sender();
+      }
+    }
+  }
+  assert(fr->is_java_frame(), "Safety check");
+  return true;
+}
+
 frame os::get_sender_for_C_frame(frame* fr) {
   if (*fr->sp() == NULL) {
     // fr is the last C frame
@@ -158,8 +192,10 @@ frame os::current_frame() {
   intptr_t* csp = (intptr_t*) *((intptr_t*) os::current_stack_pointer());
   // hack.
   frame topframe(csp, (address)0x8);
-  // return sender of current topframe which hopefully has pc != NULL.
-  return os::get_sender_for_C_frame(&topframe);
+  // Return sender of sender of current topframe which hopefully
+  // both have pc != NULL.
+  frame tmp = os::get_sender_for_C_frame(&topframe);
+  return os::get_sender_for_C_frame(&tmp);
 }
 
 // Utility functions
@@ -246,14 +282,32 @@ JVM_handle_aix_signal(int sig, siginfo_t* info, void* ucVoid, int abort_if_unrec
       // to continue with yellow zone disabled, but that doesn't buy us much and prevents
       // hs_err_pid files.
       if (thread->in_stack_yellow_reserved_zone(addr)) {
-        thread->disable_stack_yellow_reserved_zone();
         if (thread->thread_state() == _thread_in_Java) {
+            if (thread->in_stack_reserved_zone(addr)) {
+              frame fr;
+              if (os::Aix::get_frame_at_stack_banging_point(thread, uc, &fr)) {
+                assert(fr.is_java_frame(), "Must be a Javac frame");
+                frame activation =
+                  SharedRuntime::look_for_reserved_stack_annotated_method(thread, fr);
+                if (activation.sp() != NULL) {
+                  thread->disable_stack_reserved_zone();
+                  if (activation.is_interpreted_frame()) {
+                    thread->set_reserved_stack_activation((address)activation.fp());
+                  } else {
+                    thread->set_reserved_stack_activation((address)activation.unextended_sp());
+                  }
+                  return 1;
+                }
+              }
+            }
           // Throw a stack overflow exception.
           // Guard pages will be reenabled while unwinding the stack.
+          thread->disable_stack_yellow_reserved_zone();
           stub = SharedRuntime::continuation_for_implicit_exception(thread, pc, SharedRuntime::STACK_OVERFLOW);
           goto run_stub;
         } else {
           // Thread was in the vm or native code. Return and try to finish.
+          thread->disable_stack_yellow_reserved_zone();
           return 1;
         }
       } else if (thread->in_stack_red_zone(addr)) {
@@ -481,21 +535,15 @@ void os::Aix::init_thread_fpu_state(void) {
 ////////////////////////////////////////////////////////////////////////////////
 // thread stack
 
-size_t os::Aix::min_stack_allowed = 128*K;
+size_t os::Posix::_compiler_thread_min_stack_allowed = 128 * K;
+size_t os::Posix::_java_thread_min_stack_allowed = 128 * K;
+size_t os::Posix::_vm_internal_thread_min_stack_allowed = 128 * K;
 
 // return default stack size for thr_type
-size_t os::Aix::default_stack_size(os::ThreadType thr_type) {
+size_t os::Posix::default_stack_size(os::ThreadType thr_type) {
   // default stack size (compiler thread needs larger stack)
-  // Notice that the setting for compiler threads here have no impact
-  // because of the strange 'fallback logic' in os::create_thread().
-  // Better set CompilerThreadStackSize in globals_<os_cpu>.hpp if you want to
-  // specify a different stack size for compiler threads!
   size_t s = (thr_type == os::compiler_thread ? 4 * M : 1 * M);
   return s;
-}
-
-size_t os::Aix::default_guard_size(os::ThreadType thr_type) {
-  return 2 * page_size();
 }
 
 /////////////////////////////////////////////////////////////////////////////

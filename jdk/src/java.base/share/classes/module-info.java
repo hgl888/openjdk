@@ -24,9 +24,8 @@
  */
 
 /**
- * java.base defines and exports the core APIs of the Java SE platform.
+ * Defines the foundational APIs of the Java SE Platform.
  */
-
 module java.base {
 
     exports java.io;
@@ -109,6 +108,7 @@ module java.base {
     uses java.util.spi.ResourceBundleControlProvider;
     uses java.util.spi.ResourceBundleProvider;
     uses java.util.spi.TimeZoneNameProvider;
+    uses java.util.spi.ToolProvider;
     uses javax.security.auth.spi.LoginModule;
 
 
@@ -125,9 +125,13 @@ module java.base {
         jdk.jlink;
     exports jdk.internal.jimage.decompressor to
         jdk.jlink;
+    exports jdk.internal.jmod to
+        jdk.compiler,
+        jdk.jlink;
     exports jdk.internal.logger to
         java.logging;
     exports jdk.internal.org.objectweb.asm to
+        jdk.jartool,
         jdk.jlink,
         jdk.scripting.nashorn,
         jdk.vm.ci;
@@ -143,17 +147,15 @@ module java.base {
     exports jdk.internal.org.objectweb.asm.signature to
         jdk.scripting.nashorn;
     exports jdk.internal.loader to
-        java.instrument;
+        java.instrument,
+        java.logging;
     exports jdk.internal.math to
         java.desktop;
     exports jdk.internal.module to
         java.instrument,
         java.management,
-        java.xml,
-        jdk.dynalink,
         jdk.jartool,
-        jdk.jlink,
-        jdk.scripting.nashorn;
+        jdk.jlink;
     exports jdk.internal.misc to
         java.corba,
         java.desktop,
@@ -167,9 +169,12 @@ module java.base {
         jdk.charsets,
         jdk.compiler,
         jdk.jartool,
+        jdk.jdeps,
         jdk.jlink,
+        jdk.jshell,
         jdk.net,
         jdk.scripting.nashorn,
+        jdk.scripting.nashorn.shell,
         jdk.unsupported,
         jdk.vm.ci;
     exports jdk.internal.perf to
@@ -187,9 +192,11 @@ module java.base {
         jdk.scripting.nashorn,
         jdk.unsupported;
     exports jdk.internal.vm.annotation to
-        jdk.unsupported;
+        jdk.unsupported,
+        jdk.vm.ci;
     exports jdk.internal.util.jar to
-        jdk.jartool;
+        jdk.jartool,
+        jdk.jdeps;
     exports jdk.internal.vm to
         java.management,
         jdk.jvmstat;
@@ -216,6 +223,8 @@ module java.base {
     exports sun.nio.cs to
         java.desktop,
         jdk.charsets;
+    exports sun.nio.fs to
+        jdk.unsupported;
     exports sun.reflect.annotation to
         jdk.compiler;
     exports sun.reflect.generics.reflectiveObjects to
@@ -231,8 +240,7 @@ module java.base {
         java.xml.ws;
     exports sun.security.action to
         java.desktop,
-        java.security.jgss,
-        jdk.crypto.pkcs11;
+        java.security.jgss;
     exports sun.security.internal.interfaces to
         jdk.crypto.pkcs11;
     exports sun.security.internal.spec to
@@ -258,6 +266,8 @@ module java.base {
         jdk.crypto.pkcs11;
     exports sun.security.ssl to
         java.security.jgss;
+    exports sun.security.timestamp to
+        jdk.jartool;
     exports sun.security.tools to
         jdk.jartool;
     exports sun.security.util to
@@ -280,15 +290,18 @@ module java.base {
         jdk.security.auth;
     exports sun.text.resources to
         jdk.localedata;
-    exports sun.util.resources to
-        jdk.localedata;
+    exports sun.util.cldr to
+        jdk.jlink;
     exports sun.util.locale.provider to
         java.desktop,
+        jdk.jlink,
         jdk.localedata;
     exports sun.util.logging to
         java.desktop,
         java.logging,
         java.prefs;
+    exports sun.util.resources to
+        jdk.localedata;
 
     // JDK-internal service types
     uses jdk.internal.logger.DefaultLoggerFinder;
@@ -304,4 +317,3 @@ module java.base {
     provides java.nio.file.spi.FileSystemProvider with
         jdk.internal.jrtfs.JrtFileSystemProvider;
 }
-

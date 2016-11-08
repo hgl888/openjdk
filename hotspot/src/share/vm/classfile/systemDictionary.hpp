@@ -281,6 +281,7 @@ public:
 
   // Parse new stream. This won't update the system dictionary or
   // class hierarchy, simply parse the stream. Used by JVMTI RedefineClasses.
+  // Also used by Unsafe_DefineAnonymousClass
   static Klass* parse_stream(Symbol* class_name,
                              Handle class_loader,
                              Handle protection_domain,
@@ -298,7 +299,7 @@ public:
                              Handle class_loader,
                              Handle protection_domain,
                              ClassFileStream* st,
-                             const Klass* host_klass,
+                             const InstanceKlass* host_klass,
                              GrowableArray<Handle>* cp_patches,
                              TRAPS);
 
@@ -413,16 +414,12 @@ public:
   // Verification
   static void verify();
 
-#ifdef ASSERT
-  static bool is_internal_format(Symbol* class_name);
-#endif
-
   // Initialization
   static void initialize(TRAPS);
 
-  // Fast access to commonly used classes (preloaded)
+  // Checked fast access to commonly used classes - mostly preloaded
   static InstanceKlass* check_klass(InstanceKlass* k) {
-    assert(k != NULL, "preloaded klass not initialized");
+    assert(k != NULL, "klass not loaded");
     return k;
   }
 
@@ -660,6 +657,7 @@ public:
   static instanceKlassHandle load_shared_class(Symbol* class_name,
                                                Handle class_loader,
                                                TRAPS);
+  static bool is_system_class_loader(Handle class_loader);
   static bool is_platform_class_loader(Handle class_loader);
 
 protected:

@@ -28,19 +28,6 @@ package jdk.vm.ci.meta;
 public interface MemoryAccessProvider {
 
     /**
-     * Reads a value of this kind using a base address and a displacement. No bounds checking or
-     * type checking is performed. Returns {@code null} if the value is not available at this point.
-     *
-     * @param base the base address from which the value is read.
-     * @param displacement the displacement within the object in bytes
-     * @return the read value encapsulated in a {@link JavaConstant} object, or {@code null} if the
-     *         value cannot be read.
-     * @throws IllegalArgumentException if {@code kind} is {@code null}, {@link JavaKind#Void} or
-     *             not {@linkplain JavaKind#isPrimitive() primitive} kind
-     */
-    JavaConstant readUnsafeConstant(JavaKind kind, JavaConstant base, long displacement) throws IllegalArgumentException;
-
-    /**
      * Reads a primitive value using a base address and a displacement.
      *
      * @param kind the {@link JavaKind} of the returned {@link JavaConstant} object
@@ -59,7 +46,9 @@ public interface MemoryAccessProvider {
      *
      * @param base the base address from which the value is read
      * @param displacement the displacement within the object in bytes
-     * @return the read value encapsulated in a {@link Constant} object
+     * @return the read value encapsulated in a {@link Constant} object or {@code null} if the
+     *         address computed from {@code base} and {@code displacement} does not denote a
+     *         location holding an {@code Object} value
      */
     JavaConstant readObjectConstant(Constant base, long displacement);
 }

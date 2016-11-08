@@ -80,7 +80,8 @@ static bool tag_array_is_zero_initialized(Array<u1>* tags) {
 
 ConstantPool::ConstantPool(Array<u1>* tags) :
   _tags(tags),
-  _length(tags->length()) {
+  _length(tags->length()),
+  _flags(0) {
 
     assert(_tags != NULL, "invariant");
     assert(tags->length() == _length, "invariant");
@@ -416,6 +417,19 @@ int ConstantPool::impl_name_and_type_ref_index_at(int which, bool uncached) {
   return extract_high_short_from_int(ref_index);
 }
 
+constantTag ConstantPool::impl_tag_ref_at(int which, bool uncached) {
+  int pool_index = which;
+  if (!uncached && cache() != NULL) {
+    if (ConstantPool::is_invokedynamic_index(which)) {
+      // Invokedynamic index is index into resolved_references
+      pool_index = invokedynamic_cp_cache_entry_at(which)->constant_pool_index();
+    } else {
+      // change byte-ordering and go via cache
+      pool_index = remap_instruction_operand_from_cache(which);
+    }
+  }
+  return tag_at(pool_index);
+}
 
 int ConstantPool::impl_klass_ref_index_at(int which, bool uncached) {
   guarantee(!ConstantPool::is_invokedynamic_index(which),
@@ -671,15 +685,30 @@ oop ConstantPool::resolve_constant_at_impl(const constantPoolHandle& this_cp, in
       int callee_index             = this_cp->method_handle_klass_index_at(index);
       Symbol*  name =      this_cp->method_handle_name_ref_at(index);
       Symbol*  signature = this_cp->method_handle_signature_ref_at(index);
+      constantTag m_tag  = this_cp->tag_at(this_cp->method_handle_index_at(index));
       { ResourceMark rm(THREAD);
         log_debug(class, resolve)("resolve JVM_CONSTANT_MethodHandle:%d [%d/%d/%d] %s.%s",
                               ref_kind, index, this_cp->method_handle_index_at(index),
                               callee_index, name->as_C_string(), signature->as_C_string());
       }
-      KlassHandle callee;
-      { Klass* k = klass_at_impl(this_cp, callee_index, true, CHECK_NULL);
-        callee = KlassHandle(THREAD, k);
+
+      Klass* k = klass_at_impl(this_cp, callee_index, true, CHECK_NULL);
+      KlassHandle callee(THREAD, k);
+
+      // Check constant pool method consistency
+      if ((callee->is_interface() && m_tag.is_method()) ||
+          ((!callee->is_interface() && m_tag.is_interface_method()))) {
+        ResourceMark rm(THREAD);
+        char buf[400];
+        jio_snprintf(buf, sizeof(buf),
+          "Inconsistent constant pool data in classfile for class %s. "
+          "Method %s%s at index %d is %s and should be %s",
+          callee->name()->as_C_string(), name->as_C_string(), signature->as_C_string(), index,
+          callee->is_interface() ? "CONSTANT_MethodRef" : "CONSTANT_InterfaceMethodRef",
+          callee->is_interface() ? "CONSTANT_InterfaceMethodRef" : "CONSTANT_MethodRef");
+        THROW_MSG_NULL(vmSymbols::java_lang_IncompatibleClassChangeError(), buf);
       }
+
       KlassHandle klass(THREAD, this_cp->pool_holder());
       Handle value = SystemDictionary::link_method_handle_constant(klass, ref_kind,
                                                                    callee, name, signature,

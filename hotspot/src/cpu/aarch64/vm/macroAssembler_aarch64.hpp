@@ -545,6 +545,15 @@ public:
     mrs(0b011, 0b0000, 0b0000, 0b111, reg);
   }
 
+  // CTR_EL0:   op1 == 011
+  //            CRn == 0000
+  //            CRm == 0000
+  //            op2 == 001
+  inline void get_ctr_el0(Register reg)
+  {
+    mrs(0b011, 0b0000, 0b0000, 0b001, reg);
+  }
+
   // idiv variant which deals with MINLONG as dividend and -1 as divisor
   int corrected_idivl(Register result, Register ra, Register rb,
                       bool want_remainder, Register tmp = rscratch1);
@@ -748,10 +757,10 @@ public:
                            Register last_java_pc,
                            Register scratch);
 
-  void reset_last_Java_frame(Register thread, bool clearfp, bool clear_pc);
+  void reset_last_Java_frame(Register thread);
 
-  // thread in the default location (r15_thread on 64bit)
-  void reset_last_Java_frame(bool clear_fp, bool clear_pc);
+  // thread in the default location (rthread)
+  void reset_last_Java_frame(bool clear_fp);
 
   // Stores
   void store_check(Register obj);                // store check for obj - register is destroyed afterwards
@@ -986,10 +995,11 @@ public:
   }
 
   // A generic CAS; success or failure is in the EQ flag.
+  // Clobbers rscratch1
   void cmpxchg(Register addr, Register expected, Register new_val,
                enum operand_size size,
-               bool acquire, bool release,
-               Register tmp = rscratch1);
+               bool acquire, bool release, bool weak,
+               Register result);
 
   // Calls
 
@@ -1189,7 +1199,8 @@ public:
 
   void string_compare(Register str1, Register str2,
                       Register cnt1, Register cnt2, Register result,
-                      Register tmp1);
+                      Register tmp1,
+                      FloatRegister vtmp, FloatRegister vtmpZ, int ae);
 
   void arrays_equals(Register a1, Register a2,
                      Register result, Register cnt1,
@@ -1217,7 +1228,7 @@ public:
                       Register cnt1, Register cnt2,
                       Register tmp1, Register tmp2,
                       Register tmp3, Register tmp4,
-                      int int_cnt1, Register result);
+                      int int_cnt1, Register result, int ae);
 private:
   void add2_with_carry(Register final_dest_hi, Register dest_hi, Register dest_lo,
                        Register src1, Register src2);

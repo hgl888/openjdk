@@ -49,13 +49,14 @@ import java.util.Set;
 
 import jdk.internal.module.ConfigurableModuleFinder;
 import jdk.internal.module.ConfigurableModuleFinder.Phase;
-import jdk.tools.jlink.Jlink;
-import jdk.tools.jlink.Jlink.PluginsConfiguration;
+import jdk.tools.jlink.internal.plugins.ExcludeFilesPlugin;
+import jdk.tools.jlink.internal.plugins.ExcludeJmodSectionPlugin;
 import jdk.tools.jlink.plugin.Plugin;
 import jdk.tools.jlink.plugin.Plugin.Category;
 import jdk.tools.jlink.builder.DefaultImageBuilder;
 import jdk.tools.jlink.builder.ImageBuilder;
 import jdk.tools.jlink.plugin.PluginException;
+import jdk.tools.jlink.internal.Jlink.PluginsConfiguration;
 import jdk.tools.jlink.internal.plugins.PluginsResourceBundle;
 import jdk.tools.jlink.internal.plugins.DefaultCompressPlugin;
 import jdk.tools.jlink.internal.plugins.StripDebugPlugin;
@@ -136,6 +137,10 @@ public final class TaskHelper {
         void process(T task, String opt, String arg) throws BadArgs {
             processing.process(task, opt, arg);
         }
+
+        public String[] aliases() {
+            return aliases;
+        }
     }
 
     private static class PlugOption extends Option<PluginsOptions> {
@@ -192,7 +197,7 @@ public final class TaskHelper {
                         // This option is handled prior
                         // to have the options parsed.
                     },
-                    "--plugins-modulepath"));
+                    "--plugin-module-path"));
             mainOptions.add(new PlugOption(true, (task, opt, arg) -> {
                 Path path = Paths.get(arg);
                 if (!Files.exists(path) || !Files.isDirectory(path)) {
@@ -319,6 +324,20 @@ public final class TaskHelper {
                                 addArgumentMap(plugin);
                             }, "-G");
                     mainOptions.add(plugOption);
+                } else if (plugin instanceof ExcludeJmodSectionPlugin) {
+                    plugOption = new PlugOption(false, (task, opt, arg) -> {
+                            Map<String, String> m = addArgumentMap(plugin);
+                            m.put(ExcludeJmodSectionPlugin.NAME,
+                                  ExcludeJmodSectionPlugin.MAN_PAGES);
+                        }, "--no-man-pages");
+                    mainOptions.add(plugOption);
+
+                    plugOption = new PlugOption(false, (task, opt, arg) -> {
+                        Map<String, String> m = addArgumentMap(plugin);
+                        m.put(ExcludeJmodSectionPlugin.NAME,
+                              ExcludeJmodSectionPlugin.INCLUDE_HEADER_FILES);
+                    }, "--no-header-files");
+                    mainOptions.add(plugOption);
                 }
             }
         }
@@ -424,7 +443,7 @@ public final class TaskHelper {
             return opt.hasArg;
         }
 
-        public boolean listPlugins() {
+        public boolean shouldListPlugins() {
             return pluginOptions.listPlugins;
         }
 
@@ -566,24 +585,19 @@ public final class TaskHelper {
             log.println(bundleHelper.getMessage("main.command.files"));
         }
 
-        public void listPlugins(boolean showsImageBuilder) {
+        public void listPlugins() {
             log.println("\n" + bundleHelper.getMessage("main.extended.help"));
             List<Plugin> pluginList = PluginRepository.
                     getPlugins(pluginOptions.pluginsLayer);
-            for (Plugin plugin : Utils.
-                    getSortedPreProcessors(pluginList)) {
-                showPlugin(plugin, log, showsImageBuilder);
+            for (Plugin plugin : Utils.getSortedPlugins(pluginList)) {
+                showPlugin(plugin, log);
             }
 
-            if (showsImageBuilder) {
-                for (Plugin plugin : Utils.getSortedPostProcessors(pluginList)) {
-                    showPlugin(plugin, log, showsImageBuilder);
-                }
-            }
+            log.println("\n" + bundleHelper.getMessage("main.extended.help.footer"));
         }
 
-        private void showPlugin(Plugin plugin, PrintWriter log, boolean showsImageBuilder) {
-            if (showsPlugin(plugin, showsImageBuilder)) {
+        private void showPlugin(Plugin plugin, PrintWriter log) {
+            if (showsPlugin(plugin)) {
                 log.println("\n" + bundleHelper.getMessage("main.plugin.name")
                         + ": " + plugin.getName());
 
@@ -593,7 +607,7 @@ public final class TaskHelper {
                          + ": " + plugin.getClass().getName());
                     log.println(bundleHelper.getMessage("main.plugin.module")
                          + ": " + plugin.getClass().getModule().getName());
-                    Category category = Utils.getCategory(plugin);
+                    Category category = plugin.getType();
                     log.println(bundleHelper.getMessage("main.plugin.category")
                          + ": " + category.getName());
                     log.println(bundleHelper.getMessage("main.plugin.state")
@@ -716,14 +730,8 @@ public final class TaskHelper {
         }
     }
 
-    // Display all plugins or pre processors only.
-    private static boolean showsPlugin(Plugin plugin, boolean showsImageBuilder) {
-        if (!Utils.isDisabled(plugin) && plugin.getOption() != null) {
-            if (Utils.isPostProcessor(plugin) && !showsImageBuilder) {
-                return false;
-            }
-            return true;
-        }
-        return false;
+    // Display all plugins
+    private static boolean showsPlugin(Plugin plugin) {
+        return (!Utils.isDisabled(plugin) && plugin.getOption() != null);
     }
 }

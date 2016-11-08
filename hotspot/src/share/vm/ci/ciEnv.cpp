@@ -204,11 +204,13 @@ ciEnv::ciEnv(Arena* arena) : _ciEnv_arena(mtCompiler) {
 }
 
 ciEnv::~ciEnv() {
-  CompilerThread* current_thread = CompilerThread::current();
-  _factory->remove_symbols();
-  // Need safepoint to clear the env on the thread.  RedefineClasses might
-  // be reading it.
-  GUARDED_VM_ENTRY(current_thread->set_env(NULL);)
+  GUARDED_VM_ENTRY(
+      CompilerThread* current_thread = CompilerThread::current();
+      _factory->remove_symbols();
+      // Need safepoint to clear the env on the thread.  RedefineClasses might
+      // be reading it.
+      current_thread->set_env(NULL);
+  )
 }
 
 // ------------------------------------------------------------------
@@ -704,13 +706,14 @@ Method* ciEnv::lookup_method(InstanceKlass*  accessor,
                                InstanceKlass*  holder,
                                Symbol*       name,
                                Symbol*       sig,
-                               Bytecodes::Code bc) {
+                               Bytecodes::Code bc,
+                               constantTag    tag) {
   EXCEPTION_CONTEXT;
   KlassHandle h_accessor(THREAD, accessor);
   KlassHandle h_holder(THREAD, holder);
   LinkResolver::check_klass_accessability(h_accessor, h_holder, KILL_COMPILE_ON_FATAL_(NULL));
   methodHandle dest_method;
-  LinkInfo link_info(h_holder, name, sig, h_accessor, /*check_access*/true);
+  LinkInfo link_info(h_holder, name, sig, h_accessor, LinkInfo::needs_access_check, tag);
   switch (bc) {
   case Bytecodes::_invokestatic:
     dest_method =
@@ -796,7 +799,9 @@ ciMethod* ciEnv::get_method_by_index_impl(const constantPoolHandle& cpool,
 
     if (holder_is_accessible) {  // Our declared holder is loaded.
       InstanceKlass* lookup = declared_holder->get_instanceKlass();
-      Method* m = lookup_method(accessor->get_instanceKlass(), lookup, name_sym, sig_sym, bc);
+      constantTag tag = cpool->tag_ref_at(index);
+      assert(accessor->get_instanceKlass() == cpool->pool_holder(), "not the pool holder?");
+      Method* m = lookup_method(accessor->get_instanceKlass(), lookup, name_sym, sig_sym, bc, tag);
       if (m != NULL &&
           (bc == Bytecodes::_invokestatic
            ?  m->method_holder()->is_not_initialized()
@@ -1144,10 +1149,10 @@ void ciEnv::record_failure(const char* reason) {
 
 void ciEnv::report_failure(const char* reason) {
   // Create and fire JFR event
-  EventCompilerFailure event;
+  EventCompilationFailure event;
   if (event.should_commit()) {
-    event.set_compileID(compile_id());
-    event.set_failure(reason);
+    event.set_compileId(compile_id());
+    event.set_failureMessage(reason);
     event.commit();
   }
 }

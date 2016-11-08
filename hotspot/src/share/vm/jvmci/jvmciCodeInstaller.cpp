@@ -22,38 +22,21 @@
  */
 
 #include "precompiled.hpp"
+#include "asm/register.hpp"
+#include "classfile/vmSymbols.hpp"
 #include "code/compiledIC.hpp"
+#include "code/vmreg.inline.hpp"
 #include "compiler/compileBroker.hpp"
 #include "compiler/disassembler.hpp"
-#include "oops/oop.inline.hpp"
-#include "oops/objArrayOop.inline.hpp"
-#include "runtime/javaCalls.hpp"
 #include "jvmci/jvmciEnv.hpp"
 #include "jvmci/jvmciCompiler.hpp"
 #include "jvmci/jvmciCodeInstaller.hpp"
 #include "jvmci/jvmciJavaClasses.hpp"
 #include "jvmci/jvmciCompilerToVM.hpp"
 #include "jvmci/jvmciRuntime.hpp"
-#include "asm/register.hpp"
-#include "classfile/vmSymbols.hpp"
-#include "code/vmreg.hpp"
-
-#ifdef TARGET_ARCH_x86
-# include "vmreg_x86.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_sparc
-# include "vmreg_sparc.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_zero
-# include "vmreg_zero.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_arm
-# include "vmreg_arm.inline.hpp"
-#endif
-#ifdef TARGET_ARCH_ppc
-# include "vmreg_ppc.inline.hpp"
-#endif
-
+#include "oops/oop.inline.hpp"
+#include "oops/objArrayOop.inline.hpp"
+#include "runtime/javaCalls.hpp"
 
 // frequently used constants
 // Allocate them with new so they are never destroyed (otherwise, a
@@ -91,7 +74,19 @@ VMReg getVMRegFromLocation(Handle location, int total_frame_size, TRAPS) {
   } else {
     // stack slot
     if (offset % 4 == 0) {
-      return VMRegImpl::stack2reg(offset / 4);
+      VMReg vmReg = VMRegImpl::stack2reg(offset / 4);
+      if (!OopMapValue::legal_vm_reg_name(vmReg)) {
+        // This restriction only applies to VMRegs that are used in OopMap but
+        // since that's the only use of VMRegs it's simplest to put this test
+        // here.  This test should also be equivalent legal_vm_reg_name but JVMCI
+        // clients can use max_oop_map_stack_stack_offset to detect this problem
+        // directly.  The asserts just ensure that the tests are in agreement.
+        assert(offset > CompilerToVM::Data::max_oop_map_stack_offset(), "illegal VMReg");
+        JVMCI_ERROR_NULL("stack offset %d is too large to be encoded in OopMap (max %d)",
+                         offset, CompilerToVM::Data::max_oop_map_stack_offset());
+      }
+      assert(OopMapValue::legal_vm_reg_name(vmReg), "illegal VMReg");
+      return vmReg;
     } else {
       JVMCI_ERROR_NULL("unaligned stack offset %d in oop map", offset);
     }
@@ -181,8 +176,8 @@ void* CodeInstaller::record_metadata_reference(Handle constant, TRAPS) {
   /*
    * This method needs to return a raw (untyped) pointer, since the value of a pointer to the base
    * class is in general not equal to the pointer of the subclass. When patching metaspace pointers,
-   * the compiler expects a direct pointer to the subclass (Klass*, Method* or Symbol*), not a
-   * pointer to the base class (Metadata* or MetaspaceObj*).
+   * the compiler expects a direct pointer to the subclass (Klass* or Method*), not a pointer to the
+   * base class (Metadata* or MetaspaceObj*).
    */
   oop obj = HotSpotMetaspaceConstantImpl::metaspaceObject(constant);
   if (obj->is_a(HotSpotResolvedObjectTypeImpl::klass())) {
@@ -197,11 +192,6 @@ void* CodeInstaller::record_metadata_reference(Handle constant, TRAPS) {
     int index = _oop_recorder->find_index(method);
     TRACE_jvmci_3("metadata[%d of %d] = %s", index, _oop_recorder->metadata_count(), method->name()->as_C_string());
     return method;
-  } else if (obj->is_a(HotSpotSymbol::klass())) {
-    Symbol* symbol = (Symbol*) (address) HotSpotSymbol::pointer(obj);
-    assert(!HotSpotMetaspaceConstantImpl::compressed(constant), "unexpected compressed symbol pointer %s @ " INTPTR_FORMAT, symbol->as_C_string(), p2i(symbol));
-    TRACE_jvmci_3("symbol = %s", symbol->as_C_string());
-    return symbol;
   } else {
     JVMCI_ERROR_NULL("unexpected metadata reference for constant of type %s", obj->klass()->signature_name());
   }
@@ -224,9 +214,8 @@ narrowKlass CodeInstaller::record_narrow_metadata_reference(Handle constant, TRA
 #endif
 
 Location::Type CodeInstaller::get_oop_type(Handle value) {
-  Handle lirKind = Value::lirKind(value);
-  Handle platformKind = LIRKind::platformKind(lirKind);
-  assert(LIRKind::referenceMask(lirKind) == 1, "unexpected referenceMask");
+  Handle valueKind = Value::valueKind(value);
+  Handle platformKind = ValueKind::platformKind(valueKind);
 
   if (platformKind == word_kind()) {
     return Location::oop;
@@ -501,7 +490,7 @@ JVMCIEnv::CodeInstallResult CodeInstaller::gather_metadata(Handle target, Handle
     return result;
   }
 
-  _debug_recorder->pcs_size(); // ehm, create the sentinel record
+  _debug_recorder->pcs_size(); // create the sentinel record
 
   assert(_debug_recorder->pcs_length() >= 2, "must be at least 2");
 
@@ -776,7 +765,7 @@ JVMCIEnv::CodeInstallResult CodeInstaller::initialize_buffer(CodeBuffer& buffer,
     }
     last_pc_offset = pc_offset;
 
-    if (CodeInstallSafepointChecks && SafepointSynchronize::do_call_back()) {
+    if (SafepointSynchronize::do_call_back()) {
       // this is a hacky way to force a safepoint check but nothing else was jumping out at me.
       ThreadToNativeFromVM ttnfv(JavaThread::current());
     }

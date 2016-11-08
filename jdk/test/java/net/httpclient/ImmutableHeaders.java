@@ -20,11 +20,14 @@
  *
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
+ * questions.
  */
 
 /**
  * @test
  * @bug 8087112
+ * @modules java.httpclient
+ *          jdk.httpserver
  * @run main/othervm ImmutableHeaders
  * @summary ImmutableHeaders
  */

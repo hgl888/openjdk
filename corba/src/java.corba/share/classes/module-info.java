@@ -23,12 +23,16 @@
  * questions.
  */
 
+/**
+ * Defines the Java binding of the OMG CORBA APIs, and the RMI-IIOP API.
+ */
 module java.corba {
     requires public java.desktop;
     requires public java.rmi;
     requires java.logging;
     requires java.naming;
     requires java.transaction;
+    requires jdk.unsupported;
 
     exports javax.activity;
     exports javax.rmi;

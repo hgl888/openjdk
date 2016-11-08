@@ -40,32 +40,17 @@
 #define JVMCI_ERROR_OK(...)   JVMCI_ERROR_(JVMCIEnv::ok, __VA_ARGS__)
 #define CHECK_OK              CHECK_(JVMCIEnv::ok)
 
-class ParseClosure : public StackObj {
-  int _lineNo;
-  char* _filename;
-  bool _abort;
-protected:
-  void abort() { _abort = true; }
-  void warn_and_abort(const char* message) {
-    warn(message);
-    abort();
-  }
-  void warn(const char* message) {
-    warning("Error at line %d while parsing %s: %s", _lineNo, _filename == NULL ? "?" : _filename, message);
-  }
- public:
-  ParseClosure() : _lineNo(0), _filename(NULL), _abort(false) {}
-  void parse_line(char* line) {
-    _lineNo++;
-    do_line(line);
-  }
-  virtual void do_line(char* line) = 0;
-  int lineNo() { return _lineNo; }
-  bool is_aborted() { return _abort; }
-  void set_filename(char* path) {_filename = path; _lineNo = 0;}
-};
-
 class JVMCIRuntime: public AllStatic {
+ public:
+  // Constants describing whether JVMCI wants to be able to adjust the compilation
+  // level selected for a method by the VM compilation policy and if so, based on
+  // what information about the method being schedule for compilation.
+  enum CompLevelAdjustment {
+     none = 0,             // no adjustment
+     by_holder = 1,        // adjust based on declaring class of method
+     by_full_signature = 2 // adjust based on declaring class, name and signature of method
+  };
+
  private:
   static jobject _HotSpotJVMCIRuntime_instance;
   static bool _HotSpotJVMCIRuntime_initialized;
@@ -74,14 +59,11 @@ class JVMCIRuntime: public AllStatic {
   static int _trivial_prefixes_count;
   static char** _trivial_prefixes;
 
+  static CompLevelAdjustment _comp_level_adjustment;
+
   static bool _shutdown_called;
 
-  /**
-   * Instantiates a service object, calls its default constructor and returns it.
-   *
-   * @param name the name of a class implementing jdk.vm.ci.service.Service
-   */
-  static Handle create_Service(const char* name, TRAPS);
+  static CompLevel adjust_comp_level_inner(methodHandle method, bool is_osr, CompLevel level, JavaThread* thread);
 
  public:
   static bool is_HotSpotJVMCIRuntime_initialized() {
@@ -105,6 +87,11 @@ class JVMCIRuntime: public AllStatic {
   static Handle callStatic(const char* className, const char* methodName, const char* returnType, JavaCallArguments* args, TRAPS);
 
   /**
+   * Determines if the VM is sufficiently booted to initialize JVMCI.
+   */
+  static bool can_initialize_JVMCI();
+
+  /**
    * Trigger initialization of HotSpotJVMCIRuntime through JVMCI.getRuntime()
    */
   static void initialize_JVMCI(TRAPS);
@@ -120,11 +107,25 @@ class JVMCIRuntime: public AllStatic {
 
   static void shutdown(TRAPS);
 
+  static void bootstrap_finished(TRAPS);
+
   static bool shutdown_called() {
     return _shutdown_called;
   }
 
   static bool treat_as_trivial(Method* method);
+
+  /**
+   * Lets JVMCI modify the compilation level currently selected for a method by
+   * the VM compilation policy.
+   *
+   * @param method the method being scheduled for compilation
+   * @param is_osr specifies if the compilation is an OSR compilation
+   * @param level the compilation level currently selected by the VM compilation policy
+   * @param thread the current thread
+   * @return the compilation level to use for the compilation
+   */
+  static CompLevel adjust_comp_level(methodHandle method, bool is_osr, CompLevel level, JavaThread* thread);
 
   static BasicType kindToBasicType(Handle kind, TRAPS);
 
@@ -160,6 +161,9 @@ class JVMCIRuntime: public AllStatic {
   // helper methods to throw exception with complex messages
   static void throw_klass_external_name_exception(JavaThread* thread, const char* exception, Klass* klass);
   static void throw_class_cast_exception(JavaThread* thread, const char* exception, Klass* caster_klass, Klass* target_klass);
+
+  // Forces initialization of the JVMCI runtime.
+  static void force_initialization(TRAPS);
 
   // Test only function
   static int test_deoptimize_call_int(JavaThread* thread, int value);

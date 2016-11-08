@@ -33,8 +33,9 @@
 #include "gc/shared/referenceProcessor.hpp"
 #include "gc/shared/taskqueue.hpp"
 #include "logging/log.hpp"
-#include "logging/logTag.hpp"
 #include "logging/logConfiguration.hpp"
+#include "logging/logStream.hpp"
+#include "logging/logTag.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/universe.inline.hpp"
 #include "oops/oop.inline.hpp"
@@ -85,7 +86,6 @@ const char*  Arguments::_java_vendor_url_bug    = DEFAULT_VENDOR_URL_BUG;
 const char*  Arguments::_sun_java_launcher      = DEFAULT_JAVA_LAUNCHER;
 int    Arguments::_sun_java_launcher_pid        = -1;
 bool   Arguments::_sun_java_launcher_is_altjvm  = false;
-int    Arguments::_bootclassloader_append_index = -1;
 
 // These parameters are reset in method parse_vm_init_args()
 bool   Arguments::_AlwaysCompileLoopMethods     = AlwaysCompileLoopMethods;
@@ -111,8 +111,9 @@ SystemProperty *Arguments::_java_home = NULL;
 SystemProperty *Arguments::_java_class_path = NULL;
 SystemProperty *Arguments::_jdk_boot_class_path_append = NULL;
 
-GrowableArray<ModuleXPatchPath*> *Arguments::_xpatchprefix = NULL;
+GrowableArray<ModulePatchPath*> *Arguments::_patch_mod_prefix = NULL;
 PathString *Arguments::_system_boot_class_path = NULL;
+bool Arguments::_has_jimage = false;
 
 char* Arguments::_ext_dirs = NULL;
 
@@ -161,6 +162,51 @@ static void logOption(const char* opt) {
   }
 }
 
+bool needs_module_property_warning = false;
+
+#define MODULE_PROPERTY_PREFIX "jdk.module."
+#define MODULE_PROPERTY_PREFIX_LEN 11
+#define ADDEXPORTS "addexports"
+#define ADDEXPORTS_LEN 10
+#define ADDREADS "addreads"
+#define ADDREADS_LEN 8
+#define PATCH "patch"
+#define PATCH_LEN 5
+#define ADDMODS "addmods"
+#define ADDMODS_LEN 7
+#define LIMITMODS "limitmods"
+#define LIMITMODS_LEN 9
+#define PATH "path"
+#define PATH_LEN 4
+#define UPGRADE_PATH "upgrade.path"
+#define UPGRADE_PATH_LEN 12
+
+// Return TRUE if option matches 'property', or 'property=', or 'property.'.
+static bool matches_property_suffix(const char* option, const char* property, size_t len) {
+  return ((strncmp(option, property, len) == 0) &&
+          (option[len] == '=' || option[len] == '.' || option[len] == '\0'));
+}
+
+// Return true if property starts with "jdk.module." and its ensuing chars match
+// any of the reserved module properties.
+// property should be passed without the leading "-D".
+bool Arguments::is_internal_module_property(const char* property) {
+  assert((strncmp(property, "-D", 2) != 0), "Unexpected leading -D");
+  if  (strncmp(property, MODULE_PROPERTY_PREFIX, MODULE_PROPERTY_PREFIX_LEN) == 0) {
+    const char* property_suffix = property + MODULE_PROPERTY_PREFIX_LEN;
+    if (matches_property_suffix(property_suffix, ADDEXPORTS, ADDEXPORTS_LEN) ||
+        matches_property_suffix(property_suffix, ADDREADS, ADDREADS_LEN) ||
+        matches_property_suffix(property_suffix, PATCH, PATCH_LEN) ||
+        matches_property_suffix(property_suffix, ADDMODS, ADDMODS_LEN) ||
+        matches_property_suffix(property_suffix, LIMITMODS, LIMITMODS_LEN) ||
+        matches_property_suffix(property_suffix, PATH, PATH_LEN) ||
+        matches_property_suffix(property_suffix, UPGRADE_PATH, UPGRADE_PATH_LEN)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Process java launcher properties.
 void Arguments::process_sun_java_launcher_properties(JavaVMInitArgs* args) {
   // See if sun.java.launcher, sun.java.launcher.is_altjvm or
@@ -197,7 +243,7 @@ void Arguments::init_system_properties() {
   _system_boot_class_path = new PathString(NULL);
 
   PropertyList_add(&_system_properties, new SystemProperty("java.vm.specification.name",
-                                                                 "Java Virtual Machine Specification",  false));
+                                                           "Java Virtual Machine Specification",  false));
   PropertyList_add(&_system_properties, new SystemProperty("java.vm.version", VM_Version::vm_release(),  false));
   PropertyList_add(&_system_properties, new SystemProperty("java.vm.name", VM_Version::vm_name(),  false));
   PropertyList_add(&_system_properties, new SystemProperty("java.vm.info", VM_Version::vm_info_string(),  true));
@@ -376,6 +422,8 @@ static SpecialFlag const special_jvm_flags[] = {
   { "UseAltSigs",                    JDK_Version::undefined(), JDK_Version::jdk(9), JDK_Version::jdk(10) },
   { "SegmentedHeapDumpThreshold",    JDK_Version::undefined(), JDK_Version::jdk(9), JDK_Version::jdk(10) },
   { "PrintOopAddress",               JDK_Version::undefined(), JDK_Version::jdk(9), JDK_Version::jdk(10) },
+  { "PermSize",                      JDK_Version::undefined(), JDK_Version::jdk(8), JDK_Version::jdk(10) },
+  { "MaxPermSize",                   JDK_Version::undefined(), JDK_Version::jdk(8), JDK_Version::jdk(10) },
 
 #ifdef TEST_VERIFY_SPECIAL_JVM_FLAGS
   { "dep > obs",                    JDK_Version::jdk(9), JDK_Version::jdk(8), JDK_Version::undefined() },
@@ -584,27 +632,26 @@ static bool verify_special_jvm_flags() {
 // Parses a size specification string.
 bool Arguments::atojulong(const char *s, julong* result) {
   julong n = 0;
-  int args_read = 0;
-  bool is_hex = false;
-  // Skip leading 0[xX] for hexadecimal
-  if (*s =='0' && (*(s+1) == 'x' || *(s+1) == 'X')) {
-    s += 2;
-    is_hex = true;
-    args_read = sscanf(s, JULONG_FORMAT_X, &n);
-  } else {
-    args_read = sscanf(s, JULONG_FORMAT, &n);
-  }
-  if (args_read != 1) {
+
+  // First char must be a digit. Don't allow negative numbers or leading spaces.
+  if (!isdigit(*s)) {
     return false;
   }
-  while (*s != '\0' && (isdigit(*s) || (is_hex && isxdigit(*s)))) {
-    s++;
-  }
-  // 4705540: illegal if more characters are found after the first non-digit
-  if (strlen(s) > 1) {
+
+  bool is_hex = (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'));
+  char* remainder;
+  errno = 0;
+  n = strtoull(s, &remainder, (is_hex ? 16 : 10));
+  if (errno != 0) {
     return false;
   }
-  switch (*s) {
+
+  // Fail if no number was read at all or if the remainder contains more than a single non-digit character.
+  if (remainder == s || strlen(remainder) > 1) {
+    return false;
+  }
+
+  switch (*remainder) {
     case 'T': case 't':
       *result = n * G * K;
       // Check for overflow.
@@ -747,9 +794,10 @@ static bool append_to_string_flag(const char* name, const char* new_value, Flag:
   } else if (new_len == 0) {
     value = old_value;
   } else {
-    char* buf = NEW_C_HEAP_ARRAY(char, old_len + 1 + new_len + 1, mtArguments);
+     size_t length = old_len + 1 + new_len + 1;
+     char* buf = NEW_C_HEAP_ARRAY(char, length, mtArguments);
     // each new setting adds another LINE to the switch:
-    sprintf(buf, "%s\n%s", old_value, new_value);
+    jio_snprintf(buf, length, "%s\n%s", old_value, new_value);
     value = buf;
     free_this_too = buf;
   }
@@ -967,15 +1015,17 @@ const char* Arguments::build_resource_string(char** args, int count) {
   if (args == NULL || count == 0) {
     return NULL;
   }
-  size_t length = strlen(args[0]) + 1; // add 1 for the null terminator
-  for (int i = 1; i < count; i++) {
-    length += strlen(args[i]) + 1; // add 1 for a space
+  size_t length = 0;
+  for (int i = 0; i < count; i++) {
+    length += strlen(args[i]) + 1; // add 1 for a space or NULL terminating character
   }
   char* s = NEW_RESOURCE_ARRAY(char, length);
-  strcpy(s, args[0]);
-  for (int j = 1; j < count; j++) {
-    strcat(s, " ");
-    strcat(s, args[j]);
+  char* dst = s;
+  for (int j = 0; j < count; j++) {
+    size_t offset = strlen(args[j]) + 1; // add 1 for a space or NULL terminating character
+    jio_snprintf(dst, length, "%s ", args[j]); // jio_snprintf will replace the last space character with NULL character
+    dst += offset;
+    length -= offset;
   }
   return (const char*) s;
 }
@@ -1059,9 +1109,8 @@ bool Arguments::process_argument(const char* arg,
   // Only make the obsolete check for valid arguments.
   if (arg_len <= BUFLEN) {
     // Construct a string which consists only of the argument name without '+', '-', or '='.
-    char stripped_argname[BUFLEN+1];
-    strncpy(stripped_argname, argname, arg_len);
-    stripped_argname[arg_len] = '\0';  // strncpy may not null terminate.
+    char stripped_argname[BUFLEN+1]; // +1 for '\0'
+    jio_snprintf(stripped_argname, arg_len+1, "%s", argname); // +1 for '\0'
     if (is_obsolete_flag(stripped_argname, &since)) {
       char version[256];
       since.to_string(version, sizeof(version));
@@ -1199,7 +1248,7 @@ const char* Arguments::get_property(const char* key) {
   return PropertyList_get_value(system_properties(), key);
 }
 
-bool Arguments::add_property(const char* prop) {
+bool Arguments::add_property(const char* prop, PropertyWriteable writeable, PropertyInternal internal) {
   const char* eq = strchr(prop, '=');
   const char* key;
   const char* value = "";
@@ -1213,8 +1262,7 @@ bool Arguments::add_property(const char* prop) {
     size_t key_len = eq - prop;
     char* tmp_key = AllocateHeap(key_len + 1, mtArguments);
 
-    strncpy(tmp_key, prop, key_len);
-    tmp_key[key_len] = '\0';
+    jio_snprintf(tmp_key, key_len + 1, "%s", prop);
     key = tmp_key;
 
     value = &prop[key_len + 1];
@@ -1229,7 +1277,9 @@ bool Arguments::add_property(const char* prop) {
     // private and are processed in process_sun_java_launcher_properties();
     // the sun.java.launcher property is passed on to the java application
   } else if (strcmp(key, "sun.boot.library.path") == 0) {
-    PropertyList_unique_add(&_system_properties, key, value, true);
+    // append is true, writable is true, internal is false
+    PropertyList_unique_add(&_system_properties, key, value, AppendProperty,
+                            WriteableProperty, ExternalProperty);
   } else {
     if (strcmp(key, "sun.java.command") == 0) {
       char *old_java_command = _java_command;
@@ -1249,7 +1299,7 @@ bool Arguments::add_property(const char* prop) {
     }
 
     // Create new property and add at the end of the list
-    PropertyList_unique_add(&_system_properties, key, value);
+    PropertyList_unique_add(&_system_properties, key, value, AddProperty, writeable, internal);
   }
 
   if (key != prop) {
@@ -1261,41 +1311,19 @@ bool Arguments::add_property(const char* prop) {
   return true;
 }
 
-// sets or adds a module name to the jdk.launcher.addmods property
-bool Arguments::append_to_addmods_property(const char* module_name) {
-  const char* key = "jdk.launcher.addmods";
-  const char* old_value = Arguments::get_property(key);
-  size_t buf_len = strlen(key) + strlen(module_name) + 2;
-  if (old_value != NULL) {
-    buf_len += strlen(old_value) + 1;
-  }
-  char* new_value = AllocateHeap(buf_len, mtArguments);
-  if (new_value == NULL) {
-    return false;
-  }
-  if (old_value == NULL) {
-    jio_snprintf(new_value, buf_len, "%s=%s", key, module_name);
-  } else {
-    jio_snprintf(new_value, buf_len, "%s=%s,%s", key, old_value, module_name);
-  }
-  bool added = add_property(new_value);
-  FreeHeap(new_value);
-  return added;
-}
-
 #if INCLUDE_CDS
 void Arguments::check_unsupported_dumping_properties() {
   assert(DumpSharedSpaces, "this function is only used with -Xshare:dump");
   const char* unsupported_properties[5] = { "jdk.module.main",
                                            "jdk.module.path",
-                                           "jdk.upgrade.module.path",
-                                           "jdk.launcher.addmods",
-                                           "jdk.launcher.limitmods" };
+                                           "jdk.module.upgrade.path",
+                                           "jdk.module.addmods.0",
+                                           "jdk.module.limitmods" };
   const char* unsupported_options[5] = { "-m",
-                                        "-modulepath",
-                                        "-upgrademodulepath",
-                                        "-addmods",
-                                        "-limitmods" };
+                                        "--module-path",
+                                        "--upgrade-module-path",
+                                        "--add-modules",
+                                        "--limit-modules" };
   SystemProperty* sp = system_properties();
   while (sp != NULL) {
     for (int i = 0; i < 5; i++) {
@@ -1305,6 +1333,11 @@ void Arguments::check_unsupported_dumping_properties() {
       }
     }
     sp = sp->next();
+  }
+
+  // Check for an exploded module build in use with -Xshare:dump.
+  if (!has_jimage()) {
+    vm_exit_during_initialization("Dumping the shared archive is not supported with an exploded module build");
   }
 }
 #endif
@@ -1322,7 +1355,7 @@ void Arguments::set_mode_flags(Mode mode) {
   // Ensure Agent_OnLoad has the correct initial values.
   // This may not be the final mode; mode may change later in onload phase.
   PropertyList_unique_add(&_system_properties, "java.vm.info",
-                          VM_Version::vm_info_string(), false);
+                          VM_Version::vm_info_string(), AddProperty, UnwriteableProperty, ExternalProperty);
 
   UseInterpreter             = true;
   UseCompiler                = true;
@@ -1635,13 +1668,7 @@ void Arguments::set_cms_and_parnew_gc_flags() {
     CompactibleFreeListSpaceLAB::modify_initialization(OldPLABSize, OldPLABWeight);
   }
 
-  if (!ClassUnloading) {
-    FLAG_SET_CMDLINE(bool, CMSClassUnloadingEnabled, false);
-    FLAG_SET_CMDLINE(bool, ExplicitGCInvokesConcurrentAndUnloadsClasses, false);
-  }
-
   log_trace(gc)("MarkStackSize: %uk  MarkStackSizeMax: %uk", (unsigned int) (MarkStackSize / K), (uint) (MarkStackSizeMax / K));
-  log_trace(gc)("ConcGCThreads: %u", ConcGCThreads);
 }
 #endif // INCLUDE_ALL_GCS
 
@@ -1781,11 +1808,7 @@ void Arguments::select_gc_ergonomically() {
     if (should_auto_select_low_pause_collector()) {
       FLAG_SET_ERGO_IF_DEFAULT(bool, UseConcMarkSweepGC, true);
     } else {
-#if defined(JAVASE_EMBEDDED)
-      FLAG_SET_ERGO_IF_DEFAULT(bool, UseParallelGC, true);
-#else
       FLAG_SET_ERGO_IF_DEFAULT(bool, UseG1GC, true);
-#endif
     }
   } else {
     FLAG_SET_ERGO_IF_DEFAULT(bool, UseSerialGC, true);
@@ -1949,7 +1972,6 @@ void Arguments::set_g1_gc_flags() {
   }
 
   log_trace(gc)("MarkStackSize: %uk  MarkStackSizeMax: %uk", (unsigned int) (MarkStackSize / K), (uint) (MarkStackSizeMax / K));
-  log_trace(gc)("ConcGCThreads: %u", ConcGCThreads);
 }
 
 void Arguments::set_gc_specific_flags() {
@@ -1972,6 +1994,13 @@ void Arguments::set_gc_specific_flags() {
   if (MinHeapFreeRatio == 100) {
     // Keeping the heap 100% free is hard ;-) so limit it to 99%.
     FLAG_SET_ERGO(uintx, MinHeapFreeRatio, 99);
+  }
+
+  // If class unloading is disabled, also disable concurrent class unloading.
+  if (!ClassUnloading) {
+    FLAG_SET_CMDLINE(bool, CMSClassUnloadingEnabled, false);
+    FLAG_SET_CMDLINE(bool, ClassUnloadingWithConcurrentMark, false);
+    FLAG_SET_CMDLINE(bool, ExplicitGCInvokesConcurrentAndUnloadsClasses, false);
   }
 #endif // INCLUDE_ALL_GCS
 }
@@ -2228,7 +2257,7 @@ jint Arguments::set_aggressive_opts_flags() {
 
     // Feed the cache size setting into the JDK
     char buffer[1024];
-    sprintf(buffer, "java.lang.Integer.IntegerCache.high=" INTX_FORMAT, AutoBoxCacheMax);
+    jio_snprintf(buffer, 1024, "java.lang.Integer.IntegerCache.high=" INTX_FORMAT, AutoBoxCacheMax);
     if (!add_property(buffer)) {
       return JNI_ENOMEM;
     }
@@ -2279,11 +2308,7 @@ bool Arguments::sun_java_launcher_is_altjvm() {
 #if INCLUDE_JVMCI
 // Check consistency of jvmci vm argument settings.
 bool Arguments::check_jvmci_args_consistency() {
-  if (!EnableJVMCI && !JVMCIGlobals::check_jvmci_flags_are_consistent()) {
-    JVMCIGlobals::print_jvmci_args_inconsistency_error_message();
-    return false;
-  }
-  return true;
+   return JVMCIGlobals::check_jvmci_flags_are_consistent();
 }
 #endif //INCLUDE_JVMCI
 
@@ -2522,6 +2547,41 @@ bool Arguments::parse_uintx(const char* value,
   return false;
 }
 
+unsigned int addreads_count = 0;
+unsigned int addexports_count = 0;
+unsigned int addmods_count = 0;
+unsigned int patch_mod_count = 0;
+
+bool Arguments::create_property(const char* prop_name, const char* prop_value, PropertyInternal internal) {
+  size_t prop_len = strlen(prop_name) + strlen(prop_value) + 2;
+  char* property = AllocateHeap(prop_len, mtArguments);
+  int ret = jio_snprintf(property, prop_len, "%s=%s", prop_name, prop_value);
+  if (ret < 0 || ret >= (int)prop_len) {
+    FreeHeap(property);
+    return false;
+  }
+  bool added = add_property(property, UnwriteableProperty, internal);
+  FreeHeap(property);
+  return added;
+}
+
+bool Arguments::create_numbered_property(const char* prop_base_name, const char* prop_value, unsigned int count) {
+  // Make sure count is < 1,000. Otherwise, memory allocation will be too small.
+  if (count < 1000) {
+    size_t prop_len = strlen(prop_base_name) + strlen(prop_value) + 5;
+    char* property = AllocateHeap(prop_len, mtArguments);
+    int ret = jio_snprintf(property, prop_len, "%s.%d=%s", prop_base_name, count, prop_value);
+    if (ret < 0 || ret >= (int)prop_len) {
+      FreeHeap(property);
+      return false;
+    }
+    bool added = add_property(property, UnwriteableProperty, InternalProperty);
+    FreeHeap(property);
+    return added;
+  }
+  return false;
+}
+
 Arguments::ArgsRange Arguments::parse_memory_size(const char* s,
                                                   julong* long_arg,
                                                   julong min_size) {
@@ -2534,7 +2594,7 @@ Arguments::ArgsRange Arguments::parse_memory_size(const char* s,
 jint Arguments::parse_vm_init_args(const JavaVMInitArgs *java_tool_options_args,
                                    const JavaVMInitArgs *java_options_args,
                                    const JavaVMInitArgs *cmd_line_args) {
-  bool xpatch_javabase = false;
+  bool patch_mod_javabase = false;
 
   // Save default settings for some mode flags
   Arguments::_AlwaysCompileLoopMethods = AlwaysCompileLoopMethods;
@@ -2551,20 +2611,20 @@ jint Arguments::parse_vm_init_args(const JavaVMInitArgs *java_tool_options_args,
 
   // Parse args structure generated from JAVA_TOOL_OPTIONS environment
   // variable (if present).
-  jint result = parse_each_vm_init_arg(java_tool_options_args, &xpatch_javabase, Flag::ENVIRON_VAR);
+  jint result = parse_each_vm_init_arg(java_tool_options_args, &patch_mod_javabase, Flag::ENVIRON_VAR);
   if (result != JNI_OK) {
     return result;
   }
 
   // Parse args structure generated from the command line flags.
-  result = parse_each_vm_init_arg(cmd_line_args, &xpatch_javabase, Flag::COMMAND_LINE);
+  result = parse_each_vm_init_arg(cmd_line_args, &patch_mod_javabase, Flag::COMMAND_LINE);
   if (result != JNI_OK) {
     return result;
   }
 
   // Parse args structure generated from the _JAVA_OPTIONS environment
   // variable (if present) (mimics classic VM)
-  result = parse_each_vm_init_arg(java_options_args, &xpatch_javabase, Flag::ENVIRON_VAR);
+  result = parse_each_vm_init_arg(java_options_args, &patch_mod_javabase, Flag::ENVIRON_VAR);
   if (result != JNI_OK) {
     return result;
   }
@@ -2623,7 +2683,35 @@ bool valid_jdwp_agent(char *name, bool is_path) {
   return false;
 }
 
-jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args, bool* xpatch_javabase, Flag::Flags origin) {
+int Arguments::process_patch_mod_option(const char* patch_mod_tail, bool* patch_mod_javabase) {
+  // --patch-module=<module>=<file>(<pathsep><file>)*
+  assert(patch_mod_tail != NULL, "Unexpected NULL patch-module value");
+  // Find the equal sign between the module name and the path specification
+  const char* module_equal = strchr(patch_mod_tail, '=');
+  if (module_equal == NULL) {
+    jio_fprintf(defaultStream::output_stream(), "Missing '=' in --patch-module specification\n");
+    return JNI_ERR;
+  } else {
+    // Pick out the module name
+    size_t module_len = module_equal - patch_mod_tail;
+    char* module_name = NEW_C_HEAP_ARRAY_RETURN_NULL(char, module_len+1, mtArguments);
+    if (module_name != NULL) {
+      memcpy(module_name, patch_mod_tail, module_len);
+      *(module_name + module_len) = '\0';
+      // The path piece begins one past the module_equal sign
+      add_patch_mod_prefix(module_name, module_equal + 1, patch_mod_javabase);
+      FREE_C_HEAP_ARRAY(char, module_name);
+      if (!create_numbered_property("jdk.module.patch", patch_mod_tail, patch_mod_count++)) {
+        return JNI_ENOMEM;
+      }
+    } else {
+      return JNI_ENOMEM;
+    }
+  }
+  return JNI_OK;
+}
+
+jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args, bool* patch_mod_javabase, Flag::Flags origin) {
   // For match_option to return remaining or value part of option string
   const char* tail;
 
@@ -2679,7 +2767,6 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args, bool* xpatch_
         return JNI_EINVAL;
     // -bootclasspath/a:
     } else if (match_option(option, "-Xbootclasspath/a:", &tail)) {
-      Arguments::set_bootclassloader_append_index((int)strlen(Arguments::get_sysclasspath())+1);
       Arguments::append_sysclasspath(tail);
     // -bootclasspath/p:
     } else if (match_option(option, "-Xbootclasspath/p:", &tail)) {
@@ -2691,8 +2778,8 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args, bool* xpatch_
       if (tail != NULL) {
         const char* pos = strchr(tail, ':');
         size_t len = (pos == NULL) ? strlen(tail) : pos - tail;
-        char* name = (char*)memcpy(NEW_C_HEAP_ARRAY(char, len + 1, mtArguments), tail, len);
-        name[len] = '\0';
+        char* name = NEW_C_HEAP_ARRAY(char, len + 1, mtArguments);
+        jio_snprintf(name, len + 1, "%s", tail);
 
         char *options = NULL;
         if(pos != NULL) {
@@ -2707,6 +2794,36 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args, bool* xpatch_
         }
 #endif // !INCLUDE_JVMTI
         add_init_library(name, options);
+      }
+    } else if (match_option(option, "--add-reads=", &tail)) {
+      if (!create_numbered_property("jdk.module.addreads", tail, addreads_count++)) {
+        return JNI_ENOMEM;
+      }
+    } else if (match_option(option, "--add-exports=", &tail)) {
+      if (!create_numbered_property("jdk.module.addexports", tail, addexports_count++)) {
+        return JNI_ENOMEM;
+      }
+    } else if (match_option(option, "--add-modules=", &tail)) {
+      if (!create_numbered_property("jdk.module.addmods", tail, addmods_count++)) {
+        return JNI_ENOMEM;
+      }
+    } else if (match_option(option, "--limit-modules=", &tail)) {
+      if (!create_property("jdk.module.limitmods", tail, InternalProperty)) {
+        return JNI_ENOMEM;
+      }
+    } else if (match_option(option, "--module-path=", &tail)) {
+      if (!create_property("jdk.module.path", tail, ExternalProperty)) {
+        return JNI_ENOMEM;
+      }
+    } else if (match_option(option, "--upgrade-module-path=", &tail)) {
+      if (!create_property("jdk.module.upgrade.path", tail, ExternalProperty)) {
+        return JNI_ENOMEM;
+      }
+    } else if (match_option(option, "--patch-module=", &tail)) {
+      // --patch-module=<module>=<file>(<pathsep><file>)*
+      int res = process_patch_mod_option(tail, patch_mod_javabase);
+      if (res != JNI_OK) {
+        return res;
       }
     // -agentlib and -agentpath
     } else if (match_option(option, "-agentlib:", &tail) ||
@@ -2738,10 +2855,12 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args, bool* xpatch_
       return JNI_ERR;
 #else
       if (tail != NULL) {
-        char *options = strcpy(NEW_C_HEAP_ARRAY(char, strlen(tail) + 1, mtArguments), tail);
+        size_t length = strlen(tail) + 1;
+        char *options = NEW_C_HEAP_ARRAY(char, length, mtArguments);
+        jio_snprintf(options, length, "%s", tail);
         add_init_agent("instrument", options, false);
         // java agents need module java.instrument
-        if (!Arguments::append_to_addmods_property("java.instrument")) {
+        if (!create_numbered_property("jdk.module.addmods", "java.instrument", addmods_count++)) {
           return JNI_ENOMEM;
         }
       }
@@ -2999,6 +3118,13 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args, bool* xpatch_
           "-Djava.ext.dirs=%s is not supported.  Use -classpath instead.\n", value);
         return JNI_EINVAL;
       }
+      // Check for module related properties.  They must be set using the modules
+      // options. For example: use "--add-modules=java.sql", not
+      // "-Djdk.module.addmods=java.sql"
+      if (is_internal_module_property(option->optionString + 2)) {
+        needs_module_property_warning = true;
+        continue;
+      }
 
       if (!add_property(tail)) {
         return JNI_ENOMEM;
@@ -3010,7 +3136,7 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args, bool* xpatch_
           return JNI_EINVAL;
         }
         // management agent in module java.management
-        if (!Arguments::append_to_addmods_property("java.management")) {
+        if (!create_numbered_property("jdk.module.addmods", "java.management", addmods_count++)) {
           return JNI_ENOMEM;
         }
 #else
@@ -3018,33 +3144,6 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args, bool* xpatch_
           "-Dcom.sun.management is not supported in this VM.\n");
         return JNI_ERR;
 #endif
-      }
-      if (match_option(option, "-Djdk.launcher.patch.", &tail)) {
-        // -Djdk.launcher.patch.#=<module>=<file>(<pathsep><file>)*
-        // The number, #, specified will be increasing with each -Xpatch
-        // specified on the command line.
-        // Pick up module name, following the -D property's equal sign.
-        const char* property_equal = strchr(tail, '=');
-        if (property_equal == NULL) {
-          jio_fprintf(defaultStream::output_stream(), "Missing '=' in -Xpatch specification\n");
-          return JNI_ERR;
-        } else {
-          // Find the equal sign between the module name and the path specification
-          const char* module_equal = strchr(property_equal + 1, '=');
-          if (module_equal == NULL) {
-            jio_fprintf(defaultStream::output_stream(), "Bad value for -Xpatch, no module name specified\n");
-            return JNI_ERR;
-          } else {
-            // Pick out the module name, in between the two equal signs
-            size_t module_len = module_equal - property_equal - 1;
-            char* module_name = NEW_C_HEAP_ARRAY(char, module_len+1, mtArguments);
-            memcpy(module_name, property_equal + 1, module_len);
-            *(module_name + module_len) = '\0';
-            // The path piece begins one past the module_equal sign
-            Arguments::add_xpatchprefix(module_name, module_equal + 1, xpatch_javabase);
-            FREE_C_HEAP_ARRAY(char, module_name);
-          }
-        }
       }
     // -Xint
     } else if (match_option(option, "-Xint")) {
@@ -3305,37 +3404,25 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args, bool* xpatch_
   return JNI_OK;
 }
 
-void Arguments::add_xpatchprefix(const char* module_name, const char* path, bool* xpatch_javabase) {
-  // For java.base check for duplicate -Xpatch options being specified on the command line.
+void Arguments::add_patch_mod_prefix(const char* module_name, const char* path, bool* patch_mod_javabase) {
+  // For java.base check for duplicate --patch-module options being specified on the command line.
   // This check is only required for java.base, all other duplicate module specifications
   // will be checked during module system initialization.  The module system initialization
   // will throw an ExceptionInInitializerError if this situation occurs.
   if (strcmp(module_name, "java.base") == 0) {
-    if (*xpatch_javabase) {
-      vm_exit_during_initialization("Cannot specify java.base more than once to -Xpatch");
+    if (*patch_mod_javabase) {
+      vm_exit_during_initialization("Cannot specify java.base more than once to --patch-module");
     } else {
-      *xpatch_javabase = true;
+      *patch_mod_javabase = true;
     }
   }
 
-  // Create GrowableArray lazily, only if -Xpatch has been specified
-  if (_xpatchprefix == NULL) {
-    _xpatchprefix = new (ResourceObj::C_HEAP, mtArguments) GrowableArray<ModuleXPatchPath*>(10, true);
+  // Create GrowableArray lazily, only if --patch-module has been specified
+  if (_patch_mod_prefix == NULL) {
+    _patch_mod_prefix = new (ResourceObj::C_HEAP, mtArguments) GrowableArray<ModulePatchPath*>(10, true);
   }
 
-  _xpatchprefix->push(new ModuleXPatchPath(module_name, path));
-}
-
-// Set property jdk.boot.class.path.append to the contents of the bootclasspath
-// that follows either the jimage file or exploded module directories.  The
-// property will contain -Xbootclasspath/a and/or jvmti appended additions.
-void Arguments::set_jdkbootclasspath_append() {
-  char *sysclasspath = get_sysclasspath();
-  assert(sysclasspath != NULL, "NULL sysclasspath");
-  int bcp_a_idx = bootclassloader_append_index();
-  if (bcp_a_idx != -1 && bcp_a_idx < (int)strlen(sysclasspath)) {
-    _jdk_boot_class_path_append->set_value(sysclasspath + bcp_a_idx);
-  }
+  _patch_mod_prefix->push(new ModulePatchPath(module_name, path));
 }
 
 // Remove all empty paths from the app classpath (if IgnoreEmptyClassPaths is enabled)
@@ -3428,7 +3515,7 @@ jint Arguments::finalize_vm_init_args() {
   // check if the default lib/endorsed directory exists; if so, error
   char path[JVM_MAXPATHLEN];
   const char* fileSep = os::file_separator();
-  sprintf(path, "%s%slib%sendorsed", Arguments::get_java_home(), fileSep, fileSep);
+  jio_snprintf(path, JVM_MAXPATHLEN, "%s%slib%sendorsed", Arguments::get_java_home(), fileSep, fileSep);
 
   if (CheckEndorsedAndExtDirs) {
     int nonEmptyDirs = 0;
@@ -3450,7 +3537,7 @@ jint Arguments::finalize_vm_init_args() {
     return JNI_ERR;
   }
 
-  sprintf(path, "%s%slib%sext", Arguments::get_java_home(), fileSep, fileSep);
+  jio_snprintf(path, JVM_MAXPATHLEN, "%s%slib%sext", Arguments::get_java_home(), fileSep, fileSep);
   dir = os::opendir(path);
   if (dir != NULL) {
     jio_fprintf(defaultStream::output_stream(),
@@ -3459,8 +3546,6 @@ jint Arguments::finalize_vm_init_args() {
     os::closedir(dir);
     return JNI_ERR;
   }
-
-  Arguments::set_bootclassloader_append_index(((int)strlen(Arguments::get_sysclasspath()))+1);
 
   // This must be done after all arguments have been processed.
   // java_compiler() true means set to "NONE" or empty.
@@ -3510,7 +3595,8 @@ jint Arguments::finalize_vm_init_args() {
 #endif
 
 #if INCLUDE_JVMCI
-  if (EnableJVMCI && !append_to_addmods_property("jdk.vm.ci")) {
+  if (EnableJVMCI &&
+      !create_numbered_property("jdk.module.addmods", "jdk.vm.ci", addmods_count++)) {
     return JNI_ENOMEM;
   }
 #endif
@@ -3816,9 +3902,12 @@ jint Arguments::parse_options_buffer(const char* name, char* buffer, const size_
 
 void Arguments::set_shared_spaces_flags() {
   if (DumpSharedSpaces) {
-    if (Arguments::get_xpatchprefix() != NULL) {
-      vm_exit_during_initialization(
-        "Cannot use the following option when dumping the shared archive", "-Xpatch");
+    if (FailOverToOldVerifier) {
+      // Don't fall back to the old verifier on verification failure. If a
+      // class fails verification with the split verifier, it might fail the
+      // CDS runtime verifier constraint check. In that case, we don't want
+      // to share the class. We only archive classes that pass the split verifier.
+      FLAG_SET_DEFAULT(FailOverToOldVerifier, false);
     }
 
     if (RequireSharedSpaces) {
@@ -4070,7 +4159,10 @@ bool Arguments::handle_deprecated_print_gc_flags() {
   if (_gc_log_filename != NULL) {
     // -Xloggc was used to specify a filename
     const char* gc_conf = PrintGCDetails ? "gc*" : "gc";
-    return  LogConfiguration::parse_log_arguments(_gc_log_filename, gc_conf, NULL, NULL, NULL);
+
+    LogTarget(Error, logging) target;
+    LogStreamCHeap errstream(target);
+    return LogConfiguration::parse_log_arguments(_gc_log_filename, gc_conf, NULL, NULL, &errstream);
   } else if (PrintGC || PrintGCDetails) {
     LogConfiguration::configure_stdout(LogLevel::Info, !PrintGCDetails, LOG_TAGS(gc));
   }
@@ -4199,6 +4291,11 @@ jint Arguments::parse(const JavaVMInitArgs* initial_cmd_args) {
     warning("%s file is present but has been ignored.  "
             "Run with -XX:Flags=%s to load the file.",
             hotspotrc, hotspotrc);
+  }
+
+  if (needs_module_property_warning) {
+    warning("Ignoring system property options whose names match the '-Djdk.module.*'."
+            " names that are reserved for internal use.");
   }
 
 #if defined(_ALLBSD_SOURCE) || defined(AIX)  // UseLargePages is not yet supported on BSD and AIX.
@@ -4425,11 +4522,44 @@ int Arguments::PropertyList_count(SystemProperty* pl) {
   return count;
 }
 
+// Return the number of readable properties.
+int Arguments::PropertyList_readable_count(SystemProperty* pl) {
+  int count = 0;
+  while(pl != NULL) {
+    if (pl->is_readable()) {
+      count++;
+    }
+    pl = pl->next();
+  }
+  return count;
+}
+
 const char* Arguments::PropertyList_get_value(SystemProperty *pl, const char* key) {
   assert(key != NULL, "just checking");
   SystemProperty* prop;
   for (prop = pl; prop != NULL; prop = prop->next()) {
     if (strcmp(key, prop->key()) == 0) return prop->value();
+  }
+  return NULL;
+}
+
+// Return the value of the requested property provided that it is a readable property.
+const char* Arguments::PropertyList_get_readable_value(SystemProperty *pl, const char* key) {
+  assert(key != NULL, "just checking");
+  SystemProperty* prop;
+  // Return the property value if the keys match and the property is not internal or
+  // it's the special internal property "jdk.boot.class.path.append".
+  for (prop = pl; prop != NULL; prop = prop->next()) {
+    if (strcmp(key, prop->key()) == 0) {
+      if (!prop->internal()) {
+        return prop->value();
+      } else if (strcmp(key, "jdk.boot.class.path.append") == 0) {
+        return prop->value();
+      } else {
+        // Property is internal and not jdk.boot.class.path.append so return NULL.
+        return NULL;
+      }
+    }
   }
   return NULL;
 }
@@ -4478,11 +4608,12 @@ void Arguments::PropertyList_add(SystemProperty** plist, SystemProperty *new_p) 
   }
 }
 
-void Arguments::PropertyList_add(SystemProperty** plist, const char* k, const char* v) {
+void Arguments::PropertyList_add(SystemProperty** plist, const char* k, const char* v,
+                                 bool writeable, bool internal) {
   if (plist == NULL)
     return;
 
-  SystemProperty* new_p = new SystemProperty(k, v, true);
+  SystemProperty* new_p = new SystemProperty(k, v, writeable, internal);
   PropertyList_add(plist, new_p);
 }
 
@@ -4491,7 +4622,9 @@ void Arguments::PropertyList_add(SystemProperty *element) {
 }
 
 // This add maintains unique property key in the list.
-void Arguments::PropertyList_unique_add(SystemProperty** plist, const char* k, const char* v, jboolean append) {
+void Arguments::PropertyList_unique_add(SystemProperty** plist, const char* k, const char* v,
+                                        PropertyAppendable append, PropertyWriteable writeable,
+                                        PropertyInternal internal) {
   if (plist == NULL)
     return;
 
@@ -4499,16 +4632,16 @@ void Arguments::PropertyList_unique_add(SystemProperty** plist, const char* k, c
   SystemProperty* prop;
   for (prop = *plist; prop != NULL; prop = prop->next()) {
     if (strcmp(k, prop->key()) == 0) {
-      if (append) {
+      if (append == AppendProperty) {
         prop->append_value(v);
       } else {
-        prop->set_writeable_value(v);
+        prop->set_value(v);
       }
       return;
     }
   }
 
-  PropertyList_add(plist, k, v);
+  PropertyList_add(plist, k, v, writeable == WriteableProperty, internal == InternalProperty);
 }
 
 // Copies src into buf, replacing "%%" with "%" and "%p" with pid

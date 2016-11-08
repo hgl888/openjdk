@@ -23,7 +23,7 @@
 package jdk.vm.ci.hotspot;
 
 import static jdk.vm.ci.hotspot.UnsafeAccess.UNSAFE;
-import jdk.vm.ci.hotspot.HotSpotVMConfig.CompressEncoding;
+
 import jdk.vm.ci.meta.Constant;
 import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.JavaKind;
@@ -33,7 +33,7 @@ import jdk.vm.ci.meta.PrimitiveConstant;
 /**
  * HotSpot implementation of {@link MemoryAccessProvider}.
  */
-class HotSpotMemoryAccessProviderImpl implements HotSpotMemoryAccessProvider, HotSpotProxified {
+class HotSpotMemoryAccessProviderImpl implements HotSpotMemoryAccessProvider {
 
     protected final HotSpotJVMCIRuntimeProvider runtime;
 
@@ -109,13 +109,7 @@ class HotSpotMemoryAccessProviderImpl implements HotSpotMemoryAccessProvider, Ho
         }
     }
 
-    private boolean verifyReadRawObject(Object expected, Constant base, long displacement, boolean compressed) {
-        if (compressed == runtime.getConfig().useCompressedOops) {
-            Object obj = asObject(base);
-            if (obj != null) {
-                assert expected == UNSAFE.getObject(obj, displacement) : "readUnsafeOop doesn't agree with unsafe.getObject";
-            }
-        }
+    private boolean verifyReadRawObject(Object expected, Constant base, long displacement) {
         if (base instanceof HotSpotMetaspaceConstant) {
             MetaspaceWrapperObject metaspaceObject = HotSpotMetaspaceConstantImpl.getMetaspaceObject(base);
             if (metaspaceObject instanceof HotSpotResolvedObjectTypeImpl) {
@@ -135,17 +129,27 @@ class HotSpotMemoryAccessProviderImpl implements HotSpotMemoryAccessProvider, Ho
         if (base == null) {
             assert !compressed;
             displacement += asRawPointer(baseConstant);
-            ret = runtime.getCompilerToVM().readUncompressedOop(displacement);
+            ret = UNSAFE.getUncompressedObject(displacement);
+            assert verifyReadRawObject(ret, baseConstant, initialDisplacement);
         } else {
             assert runtime.getConfig().useCompressedOops == compressed;
             ret = UNSAFE.getObject(base, displacement);
         }
-        assert verifyReadRawObject(ret, baseConstant, initialDisplacement, compressed);
         return ret;
     }
 
-    @Override
-    public JavaConstant readUnsafeConstant(JavaKind kind, JavaConstant baseConstant, long displacement) {
+    /**
+     * Reads a value of this kind using a base address and a displacement. No bounds checking or
+     * type checking is performed. Returns {@code null} if the value is not available at this point.
+     *
+     * @param baseConstant the base address from which the value is read.
+     * @param displacement the displacement within the object in bytes
+     * @return the read value encapsulated in a {@link JavaConstant} object, or {@code null} if the
+     *         value cannot be read.
+     * @throws IllegalArgumentException if {@code kind} is {@code null}, {@link JavaKind#Void}, not
+     *             {@link JavaKind#Object} or not {@linkplain JavaKind#isPrimitive() primitive} kind
+     */
+    JavaConstant readUnsafeConstant(JavaKind kind, JavaConstant baseConstant, long displacement) {
         if (kind == null) {
             throw new IllegalArgumentException("null JavaKind");
         }
@@ -196,8 +200,7 @@ class HotSpotMemoryAccessProviderImpl implements HotSpotMemoryAccessProvider, Ho
     }
 
     @Override
-    public JavaConstant readNarrowOopConstant(Constant base, long displacement, CompressEncoding encoding) {
-        assert encoding.equals(runtime.getConfig().getOopEncoding()) : "unexpected oop encoding: " + encoding + " != " + runtime.getConfig().getOopEncoding();
+    public JavaConstant readNarrowOopConstant(Constant base, long displacement) {
         return HotSpotObjectConstantImpl.forObject(readRawObject(base, displacement, true), true);
     }
 
@@ -217,7 +220,7 @@ class HotSpotMemoryAccessProviderImpl implements HotSpotMemoryAccessProvider, Ho
     }
 
     @Override
-    public Constant readNarrowKlassPointerConstant(Constant base, long displacement, CompressEncoding encoding) {
+    public Constant readNarrowKlassPointerConstant(Constant base, long displacement) {
         HotSpotResolvedObjectTypeImpl klass = readKlass(base, displacement, true);
         if (klass == null) {
             return HotSpotCompressedNullConstant.COMPRESSED_NULL;
@@ -231,17 +234,5 @@ class HotSpotMemoryAccessProviderImpl implements HotSpotMemoryAccessProvider, Ho
         Object baseObject = ((HotSpotObjectConstantImpl) base).object();
         HotSpotResolvedJavaMethodImpl method = runtime.getCompilerToVM().getResolvedJavaMethod(baseObject, displacement);
         return HotSpotMetaspaceConstantImpl.forMetaspaceObject(method, false);
-    }
-
-    @Override
-    public Constant readSymbolConstant(Constant base, long displacement) {
-        int bits = runtime.getConfig().symbolPointerSize * Byte.SIZE;
-        long pointer = readRawValue(base, displacement, bits);
-        if (pointer == 0) {
-            return JavaConstant.NULL_POINTER;
-        } else {
-            String symbol = runtime.getCompilerToVM().getSymbol(pointer);
-            return new HotSpotSymbol(symbol, pointer).asConstant();
-        }
     }
 }

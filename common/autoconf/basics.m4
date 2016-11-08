@@ -99,8 +99,8 @@ AC_DEFUN([ADD_JVM_ARG_IF_OK],
   $ECHO "Check if jvm arg is ok: $1" >&AS_MESSAGE_LOG_FD
   $ECHO "Command: $3 $1 -version" >&AS_MESSAGE_LOG_FD
   OUTPUT=`$3 $1 -version 2>&1`
-  FOUND_WARN=`$ECHO "$OUTPUT" | grep -i warn`
-  FOUND_VERSION=`$ECHO $OUTPUT | grep " version \""`
+  FOUND_WARN=`$ECHO "$OUTPUT" | $GREP -i warn`
+  FOUND_VERSION=`$ECHO $OUTPUT | $GREP " version \""`
   if test "x$FOUND_VERSION" != x && test "x$FOUND_WARN" = x; then
     $2="[$]$2 $1"
     JVM_ARG_OK=true
@@ -428,9 +428,10 @@ AC_DEFUN([BASIC_SETUP_TOOL],
 # Call BASIC_SETUP_TOOL with AC_PATH_PROGS to locate the tool
 # $1: variable to set
 # $2: executable name (or list of names) to look for
+# $3: [path]
 AC_DEFUN([BASIC_PATH_PROGS],
 [
-  BASIC_SETUP_TOOL($1, [AC_PATH_PROGS($1, $2)])
+  BASIC_SETUP_TOOL($1, [AC_PATH_PROGS($1, $2, , $3)])
 ])
 
 # Call BASIC_SETUP_TOOL with AC_CHECK_TOOLS to locate the tool
@@ -444,9 +445,10 @@ AC_DEFUN([BASIC_CHECK_TOOLS],
 # Like BASIC_PATH_PROGS but fails if no tool was found.
 # $1: variable to set
 # $2: executable name (or list of names) to look for
+# $3: [path]
 AC_DEFUN([BASIC_REQUIRE_PROGS],
 [
-  BASIC_PATH_PROGS($1, $2)
+  BASIC_PATH_PROGS($1, $2, , $3)
   BASIC_CHECK_NONEMPTY($1)
 ])
 
@@ -715,7 +717,7 @@ AC_DEFUN_ONCE([BASIC_SETUP_DEVKIT],
 
         if test -n "$SDKNAME"; then
           # Call xcodebuild to determine SYSROOT
-          SYSROOT=`"$XCODEBUILD" -sdk $SDKNAME -version | grep '^Path: ' | sed 's/Path: //'`
+          SYSROOT=`"$XCODEBUILD" -sdk $SDKNAME -version | $GREP '^Path: ' | $SED 's/Path: //'`
         fi
       else
         if test $HAVE_SYSTEM_FRAMEWORK_HEADERS -eq 0; then
@@ -749,11 +751,6 @@ AC_DEFUN_ONCE([BASIC_SETUP_DEVKIT],
 
   # Prepend the extra path to the global path
   BASIC_PREPEND_TO_PATH([PATH],$EXTRA_PATH)
-
-  if test "x$OPENJDK_BUILD_OS" = "xsolaris"; then
-    # Add extra search paths on solaris for utilities like ar, as, dtrace etc...
-    PATH="$PATH:/usr/ccs/bin:/usr/sfw/bin:/opt/csw/bin:/usr/sbin"
-  fi
 
   AC_MSG_CHECKING([for sysroot])
   AC_MSG_RESULT([$SYSROOT])
@@ -994,18 +991,18 @@ AC_DEFUN([BASIC_CHECK_FIND_DELETE],
   TEST_DELETE=`$FIND "$DELETEDIR" -name TestIfFindSupportsDelete $FIND_DELETE 2>&1`
   if test -f $DELETEDIR/TestIfFindSupportsDelete; then
     # No, it does not.
-    rm $DELETEDIR/TestIfFindSupportsDelete
+    $RM $DELETEDIR/TestIfFindSupportsDelete
     if test "x$OPENJDK_TARGET_OS" = "xaix"; then
       # AIX 'find' is buggy if called with '-exec {} \+' and an empty file list
-      FIND_DELETE="-print | xargs rm"
+      FIND_DELETE="-print | $XARGS $RM"
     else
-      FIND_DELETE="-exec rm \{\} \+"
+      FIND_DELETE="-exec $RM \{\} \+"
     fi
     AC_MSG_RESULT([no])
   else
     AC_MSG_RESULT([yes])
   fi
-  rmdir $DELETEDIR
+  $RMDIR $DELETEDIR
   AC_SUBST(FIND_DELETE)
 ])
 
@@ -1022,13 +1019,21 @@ AC_DEFUN([BASIC_CHECK_TAR],
   AC_MSG_CHECKING([what type of tar was found])
   AC_MSG_RESULT([$TAR_TYPE])
 
+  TAR_CREATE_FILE_PARAM=""
+
   if test "x$TAR_TYPE" = "xgnu"; then
     TAR_INCLUDE_PARAM="T"
     TAR_SUPPORTS_TRANSFORM="true"
+    if test "x$OPENJDK_TARGET_OS" = "xsolaris"; then
+      # When using gnu tar for Solaris targets, need to use compatibility mode
+      TAR_CREATE_EXTRA_PARAM="--format=ustar"
+    fi
   else
     TAR_INCLUDE_PARAM="I"
     TAR_SUPPORTS_TRANSFORM="false"
   fi
+  AC_SUBST(TAR_TYPE)
+  AC_SUBST(TAR_CREATE_EXTRA_PARAM)
   AC_SUBST(TAR_INCLUDE_PARAM)
   AC_SUBST(TAR_SUPPORTS_TRANSFORM)
 ])
@@ -1062,7 +1067,9 @@ AC_DEFUN_ONCE([BASIC_SETUP_COMPLEX_TOOLS],
   BASIC_PATH_PROGS(HG, hg)
   BASIC_PATH_PROGS(STAT, stat)
   BASIC_PATH_PROGS(TIME, time)
-  BASIC_PATH_PROGS(DTRACE, dtrace)
+  # Dtrace is usually found in /usr/sbin on Solaris, but that directory may not
+  # be in the user path.
+  BASIC_PATH_PROGS(DTRACE, dtrace, $PATH:/usr/sbin)
   BASIC_PATH_PROGS(PATCH, [gpatch patch])
   # Check if it's GNU time
   IS_GNU_TIME=`$TIME --version 2>&1 | $GREP 'GNU time'`
@@ -1080,10 +1087,10 @@ AC_DEFUN_ONCE([BASIC_SETUP_COMPLEX_TOOLS],
     if test "x$CODESIGN" != "x"; then
       # Verify that the openjdk_codesign certificate is present
       AC_MSG_CHECKING([if openjdk_codesign certificate is present])
-      rm -f codesign-testfile
-      touch codesign-testfile
-      codesign -s openjdk_codesign codesign-testfile 2>&AS_MESSAGE_LOG_FD >&AS_MESSAGE_LOG_FD || CODESIGN=
-      rm -f codesign-testfile
+      $RM codesign-testfile
+      $TOUCH codesign-testfile
+      $CODESIGN -s openjdk_codesign codesign-testfile 2>&AS_MESSAGE_LOG_FD >&AS_MESSAGE_LOG_FD || CODESIGN=
+      $RM codesign-testfile
       if test "x$CODESIGN" = x; then
         AC_MSG_RESULT([no])
       else

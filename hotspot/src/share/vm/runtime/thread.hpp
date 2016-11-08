@@ -50,7 +50,7 @@
 #include "gc/g1/dirtyCardQueue.hpp"
 #include "gc/g1/satbMarkQueue.hpp"
 #endif // INCLUDE_ALL_GCS
-#ifdef TARGET_ARCH_zero
+#ifdef ZERO
 # include "stack_zero.hpp"
 #endif
 
@@ -933,6 +933,9 @@ class JavaThread: public Thread {
   // Specifies if the DeoptReason for the last uncommon trap was Reason_transfer_to_interpreter
   bool      _pending_transfer_to_interpreter;
 
+  // Guard for re-entrant call to JVMCIRuntime::adjust_comp_level
+  bool      _adjusting_comp_level;
+
   // An object that JVMCI compiled code can use to further describe and
   // uniquely identify the  speculative optimization guarded by the uncommon trap
   oop       _pending_failed_speculation;
@@ -1321,6 +1324,8 @@ class JavaThread: public Thread {
 #if INCLUDE_JVMCI
   int  pending_deoptimization() const             { return _pending_deoptimization; }
   oop  pending_failed_speculation() const         { return _pending_failed_speculation; }
+  bool adjusting_comp_level() const               { return _adjusting_comp_level; }
+  void set_adjusting_comp_level(bool b)           { _adjusting_comp_level = b; }
   bool has_pending_monitorenter() const           { return _pending_monitorenter; }
   void set_pending_monitorenter(bool b)           { _pending_monitorenter = b; }
   void set_pending_deoptimization(int reason)     { _pending_deoptimization = reason; }
@@ -1366,10 +1371,10 @@ class JavaThread: public Thread {
   //  |  reserved pages                      |
   //  |                                      |
   //  --  <-- stack_reserved_zone_base()    ---      ---
-  //                                                 /|\  shadow
+  //                                                 /|\  shadow     <--  stack_overflow_limit() (somewhere in here)
   //                                                  |   zone
   //                                                 \|/  size
-  //  some untouched memory                          ---         <--  stack_overflow_limit()
+  //  some untouched memory                          ---
   //
   //
   //  --
@@ -1517,9 +1522,8 @@ class JavaThread: public Thread {
 
   address stack_overflow_limit() { return _stack_overflow_limit; }
   void set_stack_overflow_limit() {
-    _stack_overflow_limit = stack_end() +
-                            (JavaThread::stack_guard_zone_size() +
-                             JavaThread::stack_shadow_zone_size());
+    _stack_overflow_limit =
+      stack_end() + MAX2(JavaThread::stack_guard_zone_size(), JavaThread::stack_shadow_zone_size());
   }
 
   // Misc. accessors/mutators
@@ -1538,6 +1542,9 @@ class JavaThread: public Thread {
   static ByteSize jmp_ring_offset()              { return byte_offset_of(JavaThread, _jmp_ring); }
 #endif // PRODUCT
   static ByteSize jni_environment_offset()       { return byte_offset_of(JavaThread, _jni_environment); }
+  static ByteSize pending_jni_exception_check_fn_offset() {
+    return byte_offset_of(JavaThread, _pending_jni_exception_check_fn);
+  }
   static ByteSize last_Java_sp_offset() {
     return byte_offset_of(JavaThread, _anchor) + JavaFrameAnchor::last_Java_sp_offset();
   }
@@ -1611,7 +1618,11 @@ class JavaThread: public Thread {
     assert(_jni_active_critical >= 0, "JNI critical nesting problem?");
   }
 
-  // Checked JNI, is the programmer required to check for exceptions, specify which function name
+  // Checked JNI: is the programmer required to check for exceptions, if so specify
+  // which function name. Returning to a Java frame should implicitly clear the
+  // pending check, this is done for Native->Java transitions (i.e. user JNI code).
+  // VM->Java transistions are not cleared, it is expected that JNI code enclosed
+  // within ThreadToNativeFromVM makes proper exception checks (i.e. VM internal).
   bool is_pending_jni_exception_check() const { return _pending_jni_exception_check_fn != NULL; }
   void clear_pending_jni_exception_check() { _pending_jni_exception_check_fn = NULL; }
   const char* get_pending_jni_exception_check() const { return _pending_jni_exception_check_fn; }
@@ -1901,43 +1912,7 @@ class JavaThread: public Thread {
 #endif // INCLUDE_ALL_GCS
 
   // Machine dependent stuff
-#ifdef TARGET_OS_ARCH_linux_x86
-# include "thread_linux_x86.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_linux_sparc
-# include "thread_linux_sparc.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_linux_zero
-# include "thread_linux_zero.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_solaris_x86
-# include "thread_solaris_x86.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_solaris_sparc
-# include "thread_solaris_sparc.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_windows_x86
-# include "thread_windows_x86.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_linux_arm
-# include "thread_linux_arm.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_linux_ppc
-# include "thread_linux_ppc.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_linux_aarch64
-# include "thread_linux_aarch64.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_aix_ppc
-# include "thread_aix_ppc.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_bsd_x86
-# include "thread_bsd_x86.hpp"
-#endif
-#ifdef TARGET_OS_ARCH_bsd_zero
-# include "thread_bsd_zero.hpp"
-#endif
-
+#include OS_CPU_HEADER(thread)
 
  public:
   void set_blocked_on_compilation(bool value) {

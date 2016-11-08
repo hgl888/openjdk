@@ -276,10 +276,7 @@ final class ModuleInfo {
         throws IOException
     {
         int requires_count = in.readUnsignedShort();
-        if (requires_count == 0 && !mn.equals("java.base")) {
-            throw invalidModuleDescriptor("The requires table must have"
-                                          + " at least one entry");
-        }
+        boolean requiresJavaBase = false;
         for (int i=0; i<requires_count; i++) {
             int index = in.readUnsignedShort();
             int flags = in.readUnsignedShort();
@@ -297,6 +294,17 @@ final class ModuleInfo {
                     mods.add(Modifier.MANDATED);
             }
             builder.requires(mods, dn);
+            if (dn.equals("java.base"))
+                requiresJavaBase = true;
+        }
+        if (mn.equals("java.base")) {
+            if (requires_count > 0) {
+                throw invalidModuleDescriptor("The requires table for java.base"
+                                              + " must be 0 length");
+            }
+        } else if (!requiresJavaBase) {
+            throw invalidModuleDescriptor("The requires table must have"
+                                          + " an entry for java.base");
         }
 
         int exports_count = in.readUnsignedShort();
@@ -656,7 +664,7 @@ final class ModuleInfo {
             try {
                 bb.get(b, off, len);
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 
@@ -673,7 +681,7 @@ final class ModuleInfo {
                 int ch = bb.get();
                 return (ch != 0);
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 
@@ -682,7 +690,7 @@ final class ModuleInfo {
             try {
                 return bb.get();
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 
@@ -691,7 +699,7 @@ final class ModuleInfo {
             try {
                 return ((int) bb.get()) & 0xff;
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 
@@ -700,7 +708,7 @@ final class ModuleInfo {
             try {
                 return bb.getShort();
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 
@@ -709,7 +717,7 @@ final class ModuleInfo {
             try {
                 return ((int) bb.getShort()) & 0xffff;
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 
@@ -718,7 +726,7 @@ final class ModuleInfo {
             try {
                 return bb.getChar();
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 
@@ -727,7 +735,7 @@ final class ModuleInfo {
             try {
                 return bb.getInt();
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 
@@ -736,7 +744,7 @@ final class ModuleInfo {
             try {
                 return bb.getLong();
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 
@@ -745,7 +753,7 @@ final class ModuleInfo {
             try {
                 return bb.getFloat();
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 
@@ -754,7 +762,7 @@ final class ModuleInfo {
             try {
                 return bb.getDouble();
             } catch (BufferUnderflowException e) {
-                throw new EOFException();
+                throw new EOFException(e.getMessage());
             }
         }
 

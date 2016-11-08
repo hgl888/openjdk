@@ -51,6 +51,7 @@ public class CPlatformWindow extends CFRetainedResource implements PlatformWindo
     private static native void nativeSetNSWindowMenuBar(long nsWindowPtr, long menuBarPtr);
     private static native Insets nativeGetNSWindowInsets(long nsWindowPtr);
     private static native void nativeSetNSWindowBounds(long nsWindowPtr, double x, double y, double w, double h);
+    private static native void nativeSetNSWindowLocationByPlatform(long nsWindowPtr);
     private static native void nativeSetNSWindowStandardFrame(long nsWindowPtr,
             double x, double y, double w, double h);
     private static native void nativeSetNSWindowMinMax(long nsWindowPtr, double minW, double minH, double maxW, double maxH);
@@ -62,6 +63,7 @@ public class CPlatformWindow extends CFRetainedResource implements PlatformWindo
     private static native void nativeSetNSWindowRepresentedFilename(long nsWindowPtr, String representedFilename);
     private static native void nativeSetEnabled(long nsWindowPtr, boolean isEnabled);
     private static native void nativeSynthesizeMouseEnteredExitedEvents();
+    private static native void nativeSynthesizeMouseEnteredExitedEvents(long nsWindowPtr, int eventType);
     private static native void nativeDispose(long nsWindowPtr);
     private static native void nativeEnterFullScreenMode(long nsWindowPtr);
     private static native void nativeExitFullScreenMode(long nsWindowPtr);
@@ -430,9 +432,6 @@ public class CPlatformWindow extends CFRetainedResource implements PlatformWindo
 
     @Override // PlatformWindow
     public void dispose() {
-        if (owner != null) {
-            CWrapper.NSWindow.removeChildWindow(owner.getNSWindowPtr(), getNSWindowPtr());
-        }
         contentView.dispose();
         nativeDispose(getNSWindowPtr());
         CPlatformWindow.super.dispose();
@@ -527,31 +526,15 @@ public class CPlatformWindow extends CFRetainedResource implements PlatformWindo
     public void setVisible(boolean visible) {
         final long nsWindowPtr = getNSWindowPtr();
 
-        // Process parent-child relationship when hiding
-        final ComponentAccessor acc = AWTAccessor.getComponentAccessor();
-        if (!visible) {
-            // Unparent my children
-            for (Window w : target.getOwnedWindows()) {
-                WindowPeer p = acc.getPeer(w);
-                if (p instanceof LWWindowPeer) {
-                    CPlatformWindow pw = (CPlatformWindow)((LWWindowPeer)p).getPlatformWindow();
-                    if (pw != null && pw.isVisible()) {
-                        CWrapper.NSWindow.removeChildWindow(nsWindowPtr, pw.getNSWindowPtr());
-                    }
-                }
-            }
-
-            // Unparent myself
-            if (owner != null && owner.isVisible()) {
-                CWrapper.NSWindow.removeChildWindow(owner.getNSWindowPtr(), nsWindowPtr);
-            }
-        }
-
         // Configure stuff
         updateIconImages();
         updateFocusabilityForAutoRequestFocus(false);
 
         boolean wasMaximized = isMaximized();
+
+        if (visible && target.isLocationByPlatform()) {
+            nativeSetNSWindowLocationByPlatform(getNSWindowPtr());
+        }
 
         // Actually show or hide the window
         LWWindowPeer blocker = (peer == null)? null : peer.getBlocker();
@@ -619,20 +602,22 @@ public class CPlatformWindow extends CFRetainedResource implements PlatformWindo
         updateFocusabilityForAutoRequestFocus(true);
 
         // Manage parent-child relationship when showing
+        final ComponentAccessor acc = AWTAccessor.getComponentAccessor();
+
         if (visible) {
-            // Add myself as a child
+            // Order myself above my parent
             if (owner != null && owner.isVisible()) {
-                CWrapper.NSWindow.addChildWindow(owner.getNSWindowPtr(), nsWindowPtr, CWrapper.NSWindow.NSWindowAbove);
+                CWrapper.NSWindow.orderWindow(nsWindowPtr, CWrapper.NSWindow.NSWindowAbove, owner.getNSWindowPtr());
                 applyWindowLevel(target);
             }
 
-            // Add my own children to myself
+            // Order my own children above myself
             for (Window w : target.getOwnedWindows()) {
                 final Object p = acc.getPeer(w);
                 if (p instanceof LWWindowPeer) {
                     CPlatformWindow pw = (CPlatformWindow)((LWWindowPeer)p).getPlatformWindow();
                     if (pw != null && pw.isVisible()) {
-                        CWrapper.NSWindow.addChildWindow(nsWindowPtr, pw.getNSWindowPtr(), CWrapper.NSWindow.NSWindowAbove);
+                        CWrapper.NSWindow.orderWindow(pw.getNSWindowPtr(), CWrapper.NSWindow.NSWindowAbove, nsWindowPtr);
                         pw.applyWindowLevel(w);
                     }
                 }
@@ -839,6 +824,13 @@ public class CPlatformWindow extends CFRetainedResource implements PlatformWindo
     public void setModalBlocked(boolean blocked) {
         if (target.getModalExclusionType() == Dialog.ModalExclusionType.APPLICATION_EXCLUDE) {
             return;
+        }
+
+        if (blocked) {
+            // We are going to show a modal window. Previously displayed window will be
+            // blocked/disabled. So we have to send mouse exited event to it now, since
+            // all mouse events are discarded for blocked/disabled windows.
+            nativeSynthesizeMouseEnteredExitedEvents(getNSWindowPtr(), CocoaConstants.NSMouseExited);
         }
 
         nativeSetEnabled(getNSWindowPtr(), !blocked);
@@ -1052,8 +1044,8 @@ public class CPlatformWindow extends CFRetainedResource implements PlatformWindo
             // Order the window to front of the stack of child windows
             final long nsWindowSelfPtr = getNSWindowPtr();
             final long nsWindowOwnerPtr = owner.getNSWindowPtr();
-            CWrapper.NSWindow.removeChildWindow(nsWindowOwnerPtr, nsWindowSelfPtr);
-            CWrapper.NSWindow.addChildWindow(nsWindowOwnerPtr, nsWindowSelfPtr, CWrapper.NSWindow.NSWindowAbove);
+            CWrapper.NSWindow.orderFront(nsWindowOwnerPtr);
+            CWrapper.NSWindow.orderWindow(nsWindowSelfPtr, CWrapper.NSWindow.NSWindowAbove, nsWindowOwnerPtr);
         }
 
         applyWindowLevel(target);

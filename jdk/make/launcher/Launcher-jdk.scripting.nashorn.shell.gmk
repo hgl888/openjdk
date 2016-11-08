@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2011, 2015, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2011, 2016, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -27,6 +27,6 @@ include LauncherCommon.gmk
 
 $(eval $(call SetupBuildLauncher, jjs, \
     MAIN_CLASS := jdk.nashorn.tools.jjs.Main, \
-    JAVA_ARGS := -addmods ALL-DEFAULT, \
+    JAVA_ARGS := --add-modules ALL-DEFAULT, \
     CFLAGS := -DENABLE_ARG_FILES, \
 ))

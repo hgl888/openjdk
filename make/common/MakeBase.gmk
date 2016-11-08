@@ -335,25 +335,27 @@ endif # HAS_FILE_FUNCTION
 ################################################################################
 # The source tips can come from the Mercurial repository, or in the files
 # $(HGTIP_FILENAME) which contains the tip but is also positioned in the same
-# directory as the original $(HGDIR) directory.
-# These should not be := assignments, only used from the root Makefile.
-HG_VERSION = $(shell $(HG) version 2> /dev/null)
-HG_DIRECTORY=.hg
-HGTIP_FILENAME=.hgtip
-HG_SEARCH = ./REPO ./*/REPO ./*/*/REPO ./*/*/*/REPO
-REPO_LIST = $(patsubst ./%,%,$(patsubst %/,%,$(sort $(dir \
-    $(shell $(CD) $(SRC_ROOT) ; \
-        $(LS) -d $(HG_SEARCH:%/REPO=%/$(HG_DIRECTORY)) \
-            $(HG_SEARCH:%/REPO=%/$(HGTIP_FILENAME)) \
-        2> /dev/null)))))
+# directory as the original .hg directory. The hgtip files are created in
+# CreateHgtipFiles.gmk.
+HGTIP_FILENAME := .hgtip
+FindAllReposAbs = \
+    $(strip $(sort $(dir $(filter-out $(SRC_ROOT)/build/%, $(wildcard \
+        $(addprefix $(SRC_ROOT)/, \
+            .hg */.hg */*/.hg */*/.hg */*/*/.hg \
+            .hgtip */.hgtip */*/.hgtip */*/.hgtip */*/*/.hgtip \
+        ) \
+    )))))
+
+FindAllReposRel = \
+    $(strip $(subst $(SRC_ROOT)/,.,$(patsubst $(SRC_ROOT)/%/, %, $(FindAllReposAbs))))
 
 # Emit the repo:tip pairs to $@, but only if they changed since last time
 define GetSourceTips
 	$(CD) $(SRC_ROOT) ; \
-	for i in $(REPO_LIST) IGNORE ; do \
+	for i in $(FindAllReposRel) IGNORE ; do \
 	  if [ "$${i}" = "IGNORE" ] ; then \
 	    continue; \
-	  elif [ -d $${i}/$(HG_DIRECTORY) -a "$(HG_VERSION)" != "" ] ; then \
+	  elif [ -d $${i}/.hg -a "$(HG)" != "" ] ; then \
 	    $(PRINTF) " %s:%s" \
 	        "$${i}" `$(HG) tip --repository $${i} --template '{node|short}\n'` ; \
 	  elif [ -f $${i}/$(HGTIP_FILENAME) ] ; then \
@@ -367,12 +369,6 @@ define GetSourceTips
 	else \
 	  $(RM) $@.tmp ; \
 	fi
-endef
-
-# Create the HGTIP_FILENAME file. Called from closed/make/SourceBundles.gmk
-define CreateHgTip
-	$(HG) tip --repository $1 --template '{node|short}\n' > $1/$(HGTIP_FILENAME); \
-	$(ECHO) $1/$(HGTIP_FILENAME)
 endef
 
 ################################################################################
@@ -535,6 +531,67 @@ else
   define install-file
 	$(call MakeDir, $(@D))
 	$(CP) -fP '$<' '$@'
+  endef
+endif
+
+################################################################################
+# Take two paths and return the path of the last common directory.
+# Ex: /foo/bar/baz, /foo/bar/banan -> /foo/bar
+#     foo/bar/baz, /foo/bar -> <empty>
+#
+# The x prefix is used to preserve the presence of the initial slash
+#
+# $1 - Path to compare
+# $2 - Other path to compare
+FindCommonPathPrefix = \
+    $(patsubst x%,%,$(subst $(SPACE),/,$(strip \
+        $(call FindCommonPathPrefixHelper, \
+            $(subst /,$(SPACE),x$(strip $1)), $(subst /,$(SPACE),x$(strip $2))) \
+    )))
+
+FindCommonPathPrefixHelper = \
+    $(if $(call equals, $(firstword $1), $(firstword $2)), \
+      $(firstword $1) \
+      $(call FindCommonPathPrefixHelper, \
+          $(wordlist 2, $(words $1), $1), $(wordlist 2, $(words $2), $2) \
+      ) \
+    )
+
+# Convert a partial path into as many directory levels of ../, removing
+# leading and following /.
+# Ex: foo/bar/baz/ -> ../../..
+#     foo/bar -> ../..
+#     /foo -> ..
+DirToDotDot = \
+    $(subst $(SPACE),/,$(foreach d, $(subst /,$(SPACE),$1),..))
+
+# Computes the relative path from a directory to a file
+# $1 - File to compute the relative path to
+# $2 - Directory to compute the relative path from
+RelativePath = \
+    $(eval $1_prefix := $(call FindCommonPathPrefix, $1, $2)) \
+    $(eval $1_dotdots := $(call DirToDotDot, $(patsubst $($(strip $1)_prefix)/%, %, $2))) \
+    $(eval $1_suffix := $(patsubst $($(strip $1)_prefix)/%, %, $1)) \
+    $($(strip $1)_dotdots)/$($(strip $1)_suffix)
+
+################################################################################
+# link-file-* works similarly to install file but creates a symlink instead on
+# platforms that support it. There are two versions, either creating a relative
+# or an absolute link.
+ifeq ($(OPENJDK_BUILD_OS), windows)
+  link-file-absolute = $(install-file)
+  link-file-relative = $(install-file)
+else
+  define link-file-relative
+	$(call MakeDir, $(@D))
+	$(RM) $@
+	$(LN) -s $(call RelativePath, $<, $(@D)) $@
+  endef
+
+  define link-file-absolute
+	$(call MakeDir, $(@D))
+	$(RM) $@
+	$(LN) -s $< $@
   endef
 endif
 
@@ -805,15 +862,20 @@ endif
 # of the build in case of failure. The  command line itself is stored in a file,
 # and also logged to stdout if the LOG=cmdlines option has been given.
 #
+# NOTE: If the command redirects stdout, the caller needs to wrap it in a
+# subshell (by adding parentheses around it), otherwise the redirect to the
+# subshell tee process will create a race condition where the target file may
+# not be fully written when the make recipe is done.
+#
 # Param 1 - The path to base the name of the log file / command line file on
 # Param 2 - The command to run
 ExecuteWithLog = \
   $(call LogCmdlines, Exececuting: [$(strip $2)]) \
   $(call WriteFile, $2, $(strip $1).cmdline) \
-  ( ( $(strip $2) > >($(TEE) $(strip $1).log) 2> >($(TEE) $(strip $1).log >&2) || \
+  ( $(strip $2) > >($(TEE) $(strip $1).log) 2> >($(TEE) $(strip $1).log >&2) || \
       ( exitcode=$(DOLLAR)? && \
       $(CP) $(strip $1).log $(MAKESUPPORT_OUTPUTDIR)/failure-logs/$(subst /,_,$(patsubst $(BUILD_OUTPUT)/%,%,$(strip $1))).log && \
-      exit $(DOLLAR)exitcode ) ) && wait )
+      exit $(DOLLAR)exitcode ) )
 
 ################################################################################
 # Find lib dir for module
@@ -827,7 +889,7 @@ else
 endif
 
 ################################################################################
-# Return a string suitable for use after a -classpath or -modulepath option. It
+# Return a string suitable for use after a -classpath or --module-path option. It
 # will be correct and safe to use on all platforms. Arguments are given as space
 # separate classpath entries. Safe for multiple nested calls.
 # param 1 : A space separated list of classpath entries

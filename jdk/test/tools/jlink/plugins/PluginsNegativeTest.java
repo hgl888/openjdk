@@ -32,21 +32,19 @@
 import java.lang.reflect.Layer;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import jdk.tools.jlink.internal.ImagePluginConfiguration;
+import jdk.tools.jlink.internal.Jlink;
+import jdk.tools.jlink.internal.Jlink.PluginsConfiguration;
 import jdk.tools.jlink.internal.PluginRepository;
 import jdk.tools.jlink.internal.ImagePluginStack;
-import jdk.tools.jlink.internal.ModulePoolImpl;
-import jdk.tools.jlink.Jlink;
-import jdk.tools.jlink.Jlink.PluginsConfiguration;
+import jdk.tools.jlink.internal.ResourcePoolManager;
 import jdk.tools.jlink.plugin.Plugin;
-import jdk.tools.jlink.plugin.ModuleEntry;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.plugin.TransformerPlugin;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.ResourcePoolBuilder;
+import jdk.tools.jlink.plugin.ResourcePoolEntry;
 
 public class PluginsNegativeTest {
 
@@ -98,8 +96,8 @@ public class PluginsNegativeTest {
         plugins.add(createPlugin("plugin"));
         ImagePluginStack stack = ImagePluginConfiguration.parseConfiguration(new PluginsConfiguration(plugins,
                 null, null));
-        ModulePoolImpl inResources = new ModulePoolImpl();
-        inResources.add(ModuleEntry.create("/aaa/bbb/A", new byte[10]));
+        ResourcePoolManager inResources = new ResourcePoolManager();
+        inResources.add(ResourcePoolEntry.create("/aaa/bbb/A", new byte[10]));
         try {
             stack.visitResources(inResources);
             throw new AssertionError("Exception expected when output resource is empty");
@@ -112,14 +110,14 @@ public class PluginsNegativeTest {
         plugins.add(createPlugin("plugin"));
         ImagePluginStack stack = ImagePluginConfiguration.parseConfiguration(new PluginsConfiguration(plugins,
                 null, null));
-        ModulePoolImpl inResources = new ModulePoolImpl();
-        ModulePoolImpl outResources = (ModulePoolImpl) stack.visitResources(inResources);
+        ResourcePoolManager inResources = new ResourcePoolManager();
+        ResourcePool outResources = stack.visitResources(inResources);
         if (!outResources.isEmpty()) {
             throw new AssertionError("Output resource is not empty");
         }
     }
 
-    public static class CustomPlugin implements TransformerPlugin {
+    public static class CustomPlugin implements Plugin {
 
         private final String name;
 
@@ -128,20 +126,14 @@ public class PluginsNegativeTest {
         }
 
         @Override
-        public void visit(ModulePool inResources, ModulePool outResources) {
-            // do nothing
+        public ResourcePool transform(ResourcePool inResources, ResourcePoolBuilder outResources) {
+            // don't add anything to the builder
+            return outResources.build();
         }
 
         @Override
         public String getName() {
             return name;
-        }
-
-        @Override
-        public Set<Category> getType() {
-            Set<Category> set = new HashSet<>();
-            set.add(Category.TRANSFORMER);
-            return Collections.unmodifiableSet(set);
         }
 
         @Override

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,7 @@
 /*
  * COPYRIGHT AND PERMISSION NOTICE
  *
- * Copyright (C) 1991-2015 Unicode, Inc. All rights reserved.
+ * Copyright (C) 1991-2016 Unicode, Inc. All rights reserved.
  * Distributed under the Terms of Use in
  * http://www.unicode.org/copyright.html.
  *
@@ -72,55 +72,100 @@ import sun.util.resources.OpenListResourceBundle;
 public class JavaTimeSupplementary_en_AU extends OpenListResourceBundle {
     @Override
     protected final Object[][] getContents() {
+        final String[] sharedAmPmMarkers = {
+            "am",
+            "pm",
+        };
+
+        final String[] sharedDatePatterns = {
+            "EEEE, d MMMM y GGGG",
+            "d MMMM y GGGG",
+            "d MMM y GGGG",
+            "dd/MM/y G",
+        };
+
+        final String[] sharedDayAbbreviations = {
+            "Sun.",
+            "Mon.",
+            "Tue.",
+            "Wed.",
+            "Thu.",
+            "Fri.",
+            "Sat.",
+        };
+
+        final String[] sharedDayNarrows = {
+            "Su.",
+            "M.",
+            "Tu.",
+            "W.",
+            "Th.",
+            "F.",
+            "Sa.",
+        };
+
+        final String[] sharedJavaTimeDatePatterns = {
+            "EEEE, d MMMM y G",
+            "d MMMM y G",
+            "d MMM y G",
+            "dd/MM/y GGGGG",
+        };
+
+        final String[] sharedMonthNarrows = {
+            "Jan.",
+            "Feb.",
+            "Mar.",
+            "Apr.",
+            "May",
+            "Jun.",
+            "Jul.",
+            "Aug.",
+            "Sep.",
+            "Oct.",
+            "Nov.",
+            "Dec.",
+            "",
+        };
+
         return new Object[][] {
+            { "field.dayperiod",
+                "am/pm" },
+            { "islamic.AmPmMarkers",
+                sharedAmPmMarkers },
             { "islamic.DatePatterns",
-                new String[] {
-                    "GGGG y MMMM d, EEEE",
-                    "GGGG y MMMM d",
-                    "GGGG y MMM d",
-                    "d/MM/y G",
-                }
-            },
+                sharedDatePatterns },
+            { "islamic.DayAbbreviations",
+                sharedDayAbbreviations },
+            { "islamic.DayNarrows",
+                sharedDayNarrows },
+            { "islamic.abbreviated.AmPmMarkers",
+                sharedAmPmMarkers },
+            { "islamic.narrow.AmPmMarkers",
+                sharedAmPmMarkers },
             { "java.time.buddhist.DatePatterns",
-                new String[] {
-                    "G y MMMM d, EEEE",
-                    "G y MMMM d",
-                    "G y MMM d",
-                    "d/MM/y GGGGG",
-                }
-            },
+                sharedJavaTimeDatePatterns },
             { "java.time.islamic.DatePatterns",
-                new String[] {
-                    "G y MMMM d, EEEE",
-                    "G y MMMM d",
-                    "G y MMM d",
-                    "d/MM/y GGGGG",
-                }
-            },
+                sharedJavaTimeDatePatterns },
             { "java.time.japanese.DatePatterns",
-                new String[] {
-                    "EEEE, MMMM d, y G",
-                    "MMMM d, y G",
-                    "MMM d, y G",
-                    "d/MM/y GGGGG",
-                }
-            },
+                sharedJavaTimeDatePatterns },
             { "java.time.roc.DatePatterns",
-                new String[] {
-                    "G y MMMM d, EEEE",
-                    "G y MMMM d",
-                    "G y MMM d",
-                    "d/MM/y GGGGG",
-                }
-            },
+                sharedJavaTimeDatePatterns },
+            { "roc.AmPmMarkers",
+                sharedAmPmMarkers },
             { "roc.DatePatterns",
-                new String[] {
-                    "GGGG y MMMM d, EEEE",
-                    "GGGG y MMMM d",
-                    "GGGG y MMM d",
-                    "d/MM/y G",
-                }
-            },
+                sharedDatePatterns },
+            { "roc.DayAbbreviations",
+                sharedDayAbbreviations },
+            { "roc.DayNarrows",
+                sharedDayNarrows },
+            { "roc.MonthAbbreviations",
+                sharedMonthNarrows },
+            { "roc.MonthNarrows",
+                sharedMonthNarrows },
+            { "roc.abbreviated.AmPmMarkers",
+                sharedAmPmMarkers },
+            { "roc.narrow.AmPmMarkers",
+                sharedAmPmMarkers },
         };
     }
 }

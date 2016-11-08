@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -37,6 +37,9 @@ import java.nio.charset.CoderResult;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.CharacterCodingException;
 import java.text.Normalizer;
+import jdk.internal.loader.URLClassPath;
+import jdk.internal.misc.JavaNetUriAccess;
+import jdk.internal.misc.SharedSecrets;
 import sun.nio.cs.ThreadLocalCoders;
 
 import java.lang.Character;             // for javadoc
@@ -92,9 +95,9 @@ import java.lang.NullPointerException;  // for javadoc
  * URIs are:
  *
  * <blockquote>
- * {@code http://java.sun.com/j2se/1.3/}<br>
- * {@code docs/guide/collections/designfaq.html#28}<br>
- * {@code ../../../demo/jfc/SwingSet2/src/SwingSet2.java}<br>
+ * {@code http://example.com/languages/java/}<br>
+ * {@code sample/a/index.html#28}<br>
+ * {@code ../../demo/b/index.html}<br>
  * {@code file:///~/calendar}
  * </blockquote>
  *
@@ -178,28 +181,28 @@ import java.lang.NullPointerException;  // for javadoc
  * normalized.  The result, for example, of resolving
  *
  * <blockquote>
- * {@code docs/guide/collections/designfaq.html#28}
+ * {@code sample/a/index.html#28}
  * &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
  * &nbsp;&nbsp;&nbsp;&nbsp;(1)
  * </blockquote>
  *
- * against the base URI {@code http://java.sun.com/j2se/1.3/} is the result
+ * against the base URI {@code http://example.com/languages/java/} is the result
  * URI
  *
  * <blockquote>
- * {@code http://docs.oracle.com/javase/1.3/docs/guide/collections/designfaq.html#28}
+ * {@code http://example.com/languages/java/sample/a/index.html#28}
  * </blockquote>
  *
  * Resolving the relative URI
  *
  * <blockquote>
- * {@code ../../../demo/jfc/SwingSet2/src/SwingSet2.java}&nbsp;&nbsp;&nbsp;&nbsp;(2)
+ * {@code ../../demo/b/index.html}&nbsp;&nbsp;&nbsp;&nbsp;(2)
  * </blockquote>
  *
  * against this result yields, in turn,
  *
  * <blockquote>
- * {@code http://java.sun.com/j2se/1.3/demo/jfc/SwingSet2/src/SwingSet2.java}
+ * {@code http://example.com/languages/java/demo/b/index.html}
  * </blockquote>
  *
  * Resolution of both absolute and relative URIs, and of both absolute and
@@ -210,7 +213,7 @@ import java.lang.NullPointerException;  // for javadoc
  * URI
  *
  * <blockquote>
- * {@code demo/jfc/SwingSet2/src/SwingSet2.java}
+ * {@code demo/b/index.html}
  * </blockquote>
  *
  * <p> <i>Relativization</i>, finally, is the inverse of resolution: For any
@@ -226,16 +229,16 @@ import java.lang.NullPointerException;  // for javadoc
  * possible.  For example, relativizing the URI
  *
  * <blockquote>
- * {@code http://docs.oracle.com/javase/1.3/docs/guide/index.html}
+ * {@code http://example.com/languages/java/sample/a/index.html#28}
  * </blockquote>
  *
  * against the base URI
  *
  * <blockquote>
- * {@code http://java.sun.com/j2se/1.3}
+ * {@code http://example.com/languages/java/}
  * </blockquote>
  *
- * yields the relative URI {@code docs/guide/index.html}.
+ * yields the relative URI {@code sample/a/index.html#28}.
  *
  *
  * <h4> Character categories </h4>
@@ -817,6 +820,25 @@ public final class URI
                             null, null, null, -1,
                             null, null, fragment))
             .parse(false);
+    }
+
+    /**
+     * Constructs a simple URI consisting of only a scheme and a pre-validated
+     * path. Provides a fast-path for some internal cases.
+     */
+    URI(String scheme, String path) {
+        assert validSchemeAndPath(scheme, path);
+        this.scheme = scheme;
+        this.path = path;
+    }
+
+    private static boolean validSchemeAndPath(String scheme, String path) {
+        try {
+            URI u = new URI(scheme + ":" + path);
+            return scheme.equals(u.scheme) && path.equals(u.path);
+        } catch (URISyntaxException e) {
+            return false;
+        }
     }
 
     /**
@@ -3571,5 +3593,13 @@ public final class URI
         }
 
     }
-
+    static {
+        SharedSecrets.setJavaNetUriAccess(
+            new JavaNetUriAccess() {
+                public URI create(String scheme, String path) {
+                    return new URI(scheme, path);
+                }
+            }
+        );
+    }
 }

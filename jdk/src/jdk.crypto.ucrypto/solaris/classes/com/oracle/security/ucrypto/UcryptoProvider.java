@@ -30,6 +30,8 @@ import java.io.File;
 import java.lang.reflect.Constructor;
 import java.util.*;
 import java.security.*;
+import static sun.security.util.SecurityConstants.PROVIDER_VER;
+
 
 /**
  * OracleUcrypto provider main class.
@@ -48,12 +50,13 @@ public final class UcryptoProvider extends Provider {
         try {
             // cannot use LoadLibraryAction because that would make the native
             // library available to the bootclassloader, but we run in the
-            // extension classloader.
-            String osname = System.getProperty("os.name");
-            if (osname.startsWith("SunOS")) {
-                provProp = AccessController.doPrivileged
-                    (new PrivilegedAction<HashMap<String, ServiceDesc>>() {
-                        public HashMap<String, ServiceDesc> run() {
+            // platform classloader.
+            provProp = AccessController.doPrivileged
+                (new PrivilegedAction<>() {
+                    @Override
+                    public HashMap<String, ServiceDesc> run() {
+                        String osname = System.getProperty("os.name");
+                        if (osname.startsWith("SunOS")) {
                             try {
                                 DEBUG = Boolean.parseBoolean(System.getProperty("com.oracle.security.ucrypto.debug"));
                                 String javaHome = System.getProperty("java.home");
@@ -64,14 +67,13 @@ public final class UcryptoProvider extends Provider {
                                 return new HashMap<>();
                             } catch (Error err) {
                                 if (DEBUG) err.printStackTrace();
-                                return null;
                             } catch (SecurityException se) {
                                 if (DEBUG) se.printStackTrace();
-                                return null;
                             }
                         }
-                    });
-            }
+                        return null;
+                    }
+                });
             if (provProp != null) {
                 boolean[] result = loadLibraries();
                 if (result.length == 2) {
@@ -196,7 +198,7 @@ public final class UcryptoProvider extends Provider {
     }
 
     public UcryptoProvider() {
-        super("OracleUcrypto", 9.0d, "Provider using Oracle Ucrypto API");
+        super("OracleUcrypto", PROVIDER_VER, "Provider using Oracle Ucrypto API");
 
         AccessController.doPrivileged(new PrivilegedAction<>() {
             public Void run() {
@@ -235,13 +237,14 @@ public final class UcryptoProvider extends Provider {
 
     @Override
     public Provider configure(String configArg) throws InvalidParameterException {
-        // default policy entry only grants read access to default config
-        if (!defConfigName.equals(configArg)) {
-            throw new InvalidParameterException("Ucrypto provider can only be " +
-                "configured with default configuration file");
+        try {
+            init(configArg);
+        } catch (UcryptoException ue) {
+            InvalidParameterException ipe =
+                    new InvalidParameterException("Error using " + configArg);
+            ipe.initCause(ue.getCause());
+            throw ipe;
         }
-        // re-read the config
-        init(defConfigName);
         return this;
     }
 

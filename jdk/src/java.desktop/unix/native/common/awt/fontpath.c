@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -805,30 +805,36 @@ static char **getFontConfigLocations() {
     pattern = (*FcPatternBuild)(NULL, FC_OUTLINE, FcTypeBool, FcTrue, NULL);
     objset = (*FcObjectSetBuild)(FC_FILE, NULL);
     fontSet = (*FcFontList)(NULL, pattern, objset);
-    fontdirs = (char**)calloc(fontSet->nfont+1, sizeof(char*));
-    for (f=0; f < fontSet->nfont; f++) {
-        FcChar8 *file;
-        FcChar8 *dir;
-        if ((*FcPatternGetString)(fontSet->fonts[f], FC_FILE, 0, &file) ==
-                                  FcResultMatch) {
-            dir = (*FcStrDirname)(file);
-            found = 0;
-            for (i=0;i<numdirs; i++) {
-                if (strcmp(fontdirs[i], (char*)dir) == 0) {
-                    found = 1;
-                    break;
+    if (fontSet == NULL) {
+        /* FcFontList() may return NULL if fonts are not installed. */
+        fontdirs = NULL;
+    } else {
+        fontdirs = (char**)calloc(fontSet->nfont+1, sizeof(char*));
+        for (f=0; f < fontSet->nfont; f++) {
+            FcChar8 *file;
+            FcChar8 *dir;
+            if ((*FcPatternGetString)(fontSet->fonts[f], FC_FILE, 0, &file) ==
+                                      FcResultMatch) {
+                dir = (*FcStrDirname)(file);
+                found = 0;
+                for (i=0;i<numdirs; i++) {
+                    if (strcmp(fontdirs[i], (char*)dir) == 0) {
+                        found = 1;
+                        break;
+                    }
+                }
+                if (!found) {
+                    fontdirs[numdirs++] = (char*)dir;
+                } else {
+                    free((char*)dir);
                 }
             }
-            if (!found) {
-                fontdirs[numdirs++] = (char*)dir;
-            } else {
-                free((char*)dir);
-            }
         }
+        /* Free fontset if one was returned */
+        (*FcFontSetDestroy)(fontSet);
     }
 
     /* Free memory and close the ".so" */
-    (*FcFontSetDestroy)(fontSet);
     (*FcPatternDestroy)(pattern);
     closeFontConfig(libfontconfig, JNI_TRUE);
     return fontdirs;
@@ -1012,17 +1018,20 @@ Java_sun_font_FontConfigManager_getFontConfig
     jfieldID familyNameID, styleNameID, fullNameID, fontFileID;
     jmethodID fcFontCons;
     char* debugMinGlyphsStr = getenv("J2D_DEBUG_MIN_GLYPHS");
+    jclass fcInfoClass;
+    jclass fcCompFontClass;
+    jclass fcFontClass;
 
     CHECK_NULL(fcInfoObj);
     CHECK_NULL(fcCompFontArray);
 
-    jclass fcInfoClass =
+    fcInfoClass =
         (*env)->FindClass(env, "sun/font/FontConfigManager$FontConfigInfo");
     CHECK_NULL(fcInfoClass);
-    jclass fcCompFontClass =
+    fcCompFontClass =
         (*env)->FindClass(env, "sun/font/FontConfigManager$FcCompFont");
     CHECK_NULL(fcCompFontClass);
-    jclass fcFontClass =
+    fcFontClass =
          (*env)->FindClass(env, "sun/font/FontConfigManager$FontConfigFont");
     CHECK_NULL(fcFontClass);
 
@@ -1146,7 +1155,8 @@ Java_sun_font_FontConfigManager_getFontConfig
         int fn, j, fontCount, nfonts;
         unsigned int minGlyphs;
         FcChar8 **family, **styleStr, **fullname, **file;
-        jarray fcFontArr;
+        jarray fcFontArr = NULL;
+        FcCharSet *unionCharset = NULL;
 
         fcCompFontObj = (*env)->GetObjectArrayElement(env, fcCompFontArray, i);
         fcNameStr =
@@ -1218,7 +1228,7 @@ Java_sun_font_FontConfigManager_getFontConfig
                 minGlyphs = val;
             }
         }
-        FcCharSet *unionCharset = NULL;
+
         for (j=0; j<nfonts; j++) {
             FcPattern *fontPattern = fontset->fonts[j];
             FcChar8 *fontformat;

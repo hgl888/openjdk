@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2009, 2014, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2009, 2016, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -335,7 +335,10 @@ else
     for j in ${repos_extra} ; do
       if [ "${i}" = "${j}" ] ; then
         # it's an "extra"
-        pull_base="${pull_extra}"
+        if [ -n "${pull_extra}" ]; then
+          # if no pull_extra is defined, assume that pull_default is valid
+          pull_base="${pull_extra}"
+        fi
       fi
     done
 

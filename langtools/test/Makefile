@@ -84,12 +84,14 @@ else
 endif
 
 # Default JTREG to run
-ifdef JPRT_JTREG_HOME
-  JTREG_HOME = $(JPRT_JTREG_HOME)
-else ifdef JT_HOME
-  JTREG_HOME = $(JT_HOME)
-else
-  JTREG_HOME = $(SLASH_JAVA)/re/jtreg/4.1-jigsaw/nightly/binaries/jtreg/
+ifndef JTREG_HOME
+  ifdef JPRT_JTREG_HOME
+    JTREG_HOME = $(JPRT_JTREG_HOME)
+  else ifdef JT_HOME
+    JTREG_HOME = $(JT_HOME)
+  else
+    JTREG_HOME = $(SLASH_JAVA)/re/jtreg/4.2/promoted/latest/
+  endif
 endif
 JTREG = $(JTREG_HOME)/bin/jtreg
 JTDIFF = $(JTREG_HOME)/bin/jtdiff
@@ -105,10 +107,12 @@ else
 endif
 
 # Default JCK to run
-ifdef JPRT_JCK_HOME
-  JCK_HOME = $(JPRT_JCK_HOME)
-else
-  JCK_HOME = $(SLASH_JAVA)/re/jck/8/promoted/latest/binaries
+ifndef JCK_HOME
+  ifdef JPRT_JCK_HOME
+    JCK_HOME = $(JPRT_JCK_HOME)
+  else
+    JCK_HOME = $(SLASH_JAVA)/re/jck/8/promoted/latest/binaries
+  endif
 endif
 
 # Default JDK for JTREG and JCK
@@ -152,6 +156,10 @@ ifdef TESTBOOTCLASSPATH
 	-vmoptions:-Xbootclasspath/p:$(TESTBOOTCLASSPATH) \
 	-refvmoptions:-Xbootclasspath/p:$(TESTBOOTCLASSPATH)
 endif
+
+# Set the max memory for jtreg target test JVMs
+JTREG_TESTVM_MEMORY_OPTION = -vmoption:-Xmx768m
+JTREG_OPTIONS += $(JTREG_TESTVM_MEMORY_OPTION)
 
 ifdef EXTRA_JTREG_OPTIONS
   JTREG_OPTIONS += $(EXTRA_JTREG_OPTIONS)
@@ -203,10 +211,10 @@ ifdef JCK_TIMEOUT_FACTOR
 endif
 
 # Default verbosity setting for jtreg
-JTREG_VERBOSE = fail,error,nopass
+JTREG_VERBOSE ?= fail,error,nopass
 
 # Default verbosity setting for jck
-JCK_VERBOSE = non-pass
+JCK_VERBOSE ?= non-pass
 
 # Assertions: some tests show failures when assertions are enabled.
 # Since javac is typically loaded via the bootclassloader (either via TESTJAVA
@@ -232,10 +240,6 @@ EXIT = exit
 # to a given level. Redefine function or preceding FATAL_*_EXIT codes as needed.
 EXIT_IF_FATAL = status=$$?; if [ $$status -ge $(1) ]; then exit $$status ; fi
 
-# The test directories to run
-DEFAULT_TESTDIRS = .
-TESTDIRS = $(DEFAULT_TESTDIRS)
-
 # Root of all test results
 TEST_OUTPUT_DIR = $(TEST_ROOT)/../build/$(PLATFORM)-$(ARCH)/test/langtools
 ABS_TEST_OUTPUT_DIR := \
@@ -246,6 +250,17 @@ ABS_TEST_OUTPUT_DIR := \
 JTREG_OUTPUT_DIR = $(ABS_TEST_OUTPUT_DIR)/jtreg
 JCK_COMPILER_OUTPUT_DIR = $(ABS_TEST_OUTPUT_DIR)/jck-compiler
 JCK_RUNTIME_OUTPUT_DIR = $(ABS_TEST_OUTPUT_DIR)/jck-runtime-Xcompile
+
+# Is the test JVM 32-bit?
+DATA_MODEL := \
+	$(shell $(JT_JAVA)/bin/java -XshowSettings:properties -version 2>&1 | \
+		grep 'sun\.arch\.data\.model' | \
+		awk '{print $$3}')
+ifeq ($(DATA_MODEL), 32)
+  # Set the GC options for test vms having a smaller address space
+  JTREG_GC_OPTION = -vmoption:-XX:+UseSerialGC
+  JTREG_OPTIONS += $(JTREG_GC_OPTION)
+endif
 
 # Default make rule -- warning, may take a while
 all: $(JPRT_CLEAN) jtreg-tests jck-compiler-tests jck-runtime-tests $(JPRT_ARCHIVE_BUNDLE) all-summary
@@ -260,20 +275,23 @@ jck-compiler: $(JPRT_CLEAN) jck-compiler-tests $(JPRT_ARCHIVE_BUNDLE) jck-compil
 jck-runtime: $(JPRT_CLEAN) jck-runtime-tests $(JPRT_ARCHIVE_BUNDLE) jck-runtime-summary
 	@echo "Testing completed successfully"
 
+# a way to select tests from outside
+# works for targets 'jtreg', 'jck-compiler', and 'jck-runtime'
+ifdef TEST_SELECTION
+  JTREG_TESTDIRS = $(TEST_SELECTION)
+  JCK_COMPILER_TESTDIRS = $(TEST_SELECTION)
+  JCK_RUNTIME_TESTDIRS = $(TEST_SELECTION)
+endif
+
 # for use with JPRT -testrule
 all:		JTREG_TESTDIRS = .
-jtreg:		JTREG_TESTDIRS = .
+jtreg:		JTREG_TESTDIRS ?= .
 apt:		JTREG_TESTDIRS = tools/apt
 javac: 		JTREG_TESTDIRS = tools/javac
 javadoc:	JTREG_TESTDIRS = tools/javadoc com/sun/javadoc
 javah:		JTREG_TESTDIRS = tools/javah
 javap:		JTREG_TESTDIRS = tools/javap
 jdeps:		JTREG_TESTDIRS = tools/jdeps
-
-# a way to select jtreg tests from outside
-ifdef TEST_SELECTION
-  JTREG_TESTDIRS = $(TEST_SELECTION)
-endif
 
 
 # Run jtreg tests
@@ -301,8 +319,6 @@ jtreg-tests: check-jtreg FRC
 	    $(JTREG_OUTPUT_DIR)/diff.html $(JTREG_OUTPUT_DIR)/status.txt
 	@mkdir -p $(JTREG_OUTPUT_DIR)
 	JT_JAVA=$(JT_JAVA) $(JTREG) \
-	  -J-Xmx512m \
-	  -vmoption:-Xmx768m \
 	  -a -ignore:quiet $(if $(JTREG_VERBOSE),-v:$(JTREG_VERBOSE)) \
 	  -r:$(JTREG_OUTPUT_DIR)/JTreport \
 	  -w:$(JTREG_OUTPUT_DIR)/JTwork \
@@ -311,6 +327,7 @@ jtreg-tests: check-jtreg FRC
 	  $(JTREG_EXCLUSIONS) \
 	  $(JTREG_OPTIONS) \
 	  $(JTREG_TESTDIRS) \
+	    2>&1 | tee $(JTREG_OUTPUT_DIR)/output.txt \
 	|| ( $(call EXIT_IF_FATAL,$(FATAL_JTREG_EXIT)) ; \
 	    echo $$status > $(JTREG_OUTPUT_DIR)/status.txt \
 	)
@@ -438,11 +455,11 @@ jck-runtime-summary: FRC
 
 # Check to make sure these directories exist
 check-jck:
-	if [ ! -d '$(JCK_HOME)' ]; then \
+	@if [ ! -d '$(JCK_HOME)' ]; then \
 	    echo "JCK_HOME $(JCK_HOME) missing" ; \
 	    $(EXIT) 1 ; \
 	fi
-	if [ ! -d '$(PRODUCT_HOME)' ]; then \
+	@if [ ! -d '$(PRODUCT_HOME)' ]; then \
 	    echo "PRODUCT_HOME $(PRODUCT_HOME) missing" ; \
 	    $(EXIT) 1 ; \
 	fi

@@ -321,6 +321,13 @@ class InetAddress implements java.io.Serializable {
                     public String getOriginalHostName(InetAddress ia) {
                         return ia.holder.getOriginalHostName();
                     }
+
+                    public InetAddress getByName(String hostName,
+                                                 InetAddress hostAddress)
+                            throws UnknownHostException
+                    {
+                        return InetAddress.getByName(hostName, hostAddress);
+                    }
                 }
         );
         init();
@@ -361,7 +368,7 @@ class InetAddress implements java.io.Serializable {
     }
 
     /**
-     * Utility routine to check if the InetAddress in a wildcard address.
+     * Utility routine to check if the InetAddress is a wildcard address.
      * @return a {@code boolean} indicating if the Inetaddress is
      *         a wildcard address.
      * @since 1.4

@@ -31,6 +31,7 @@
  */
 
 import java.io.File;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.Map.Entry;
 
@@ -64,7 +65,7 @@ public class Main {
     static JavacTask javac;
     static Elements elements;
 
-    static List<String> addmods_ALL_SYSTEM = Arrays.asList("-addmods", "ALL-SYSTEM");
+    static List<String> addmods_ALL_SYSTEM = Arrays.asList("--add-modules", "ALL-SYSTEM");
 
     public static void main(String[] args) throws Exception {
         JavaCompiler tool = ToolProvider.getSystemJavaCompiler();
@@ -84,7 +85,9 @@ public class Main {
                     continue;
                 if (type.endsWith("module-info"))
                     continue;
-                String moduleName = fm.asPath(file).getName(1).toString();
+                Path path = fm.asPath(file);
+                int moduleIndex = path.getNameCount() - type.split("\\Q.\\E").length - 1;
+                String moduleName = path.getName(moduleIndex).toString();
                 try {
                     ModuleElement me = elements.getModuleElement(moduleName);
                     me.getClass();

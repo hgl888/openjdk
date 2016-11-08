@@ -39,6 +39,7 @@ elapsedTimer JVMCICompiler::_codeInstallTimer;
 
 JVMCICompiler::JVMCICompiler() : AbstractCompiler(jvmci) {
   _bootstrapping = false;
+  _bootstrap_compilation_request_handled = false;
   _methods_compiled = 0;
   assert(_instance == NULL, "only one instance allowed");
   _instance = this;
@@ -57,7 +58,7 @@ void JVMCICompiler::initialize() {
   CompilationPolicy::completed_vm_startup();
 }
 
-void JVMCICompiler::bootstrap() {
+void JVMCICompiler::bootstrap(TRAPS) {
   if (Arguments::mode() == Arguments::_int) {
     // Nothing to do in -Xint mode
     return;
@@ -68,7 +69,6 @@ void JVMCICompiler::bootstrap() {
   FlagSetting ctwOff(CompileTheWorld, false);
 #endif
 
-  JavaThread* THREAD = JavaThread::current();
   _bootstrapping = true;
   ResourceMark rm;
   HandleMark hm;
@@ -97,7 +97,7 @@ void JVMCICompiler::bootstrap() {
     do {
       os::sleep(THREAD, 100, true);
       qsize = CompileBroker::queue_size(CompLevel_full_optimization);
-    } while (first_round && qsize == 0);
+    } while (!_bootstrap_compilation_request_handled && first_round && qsize == 0);
     first_round = false;
     if (PrintBootstrap) {
       while (z < (_methods_compiled / 100)) {
@@ -111,13 +111,14 @@ void JVMCICompiler::bootstrap() {
     tty->print_cr(" in " JLONG_FORMAT " ms (compiled %d methods)", os::javaTimeMillis() - start, _methods_compiled);
   }
   _bootstrapping = false;
+  JVMCIRuntime::bootstrap_finished(CHECK);
 }
 
-#define CHECK_ABORT THREAD); \
+#define CHECK_EXIT THREAD); \
 if (HAS_PENDING_EXCEPTION) { \
   char buf[256]; \
   jio_snprintf(buf, 256, "Uncaught exception at %s:%d", __FILE__, __LINE__); \
-  JVMCICompiler::abort_on_pending_exception(PENDING_EXCEPTION, buf); \
+  JVMCICompiler::exit_on_pending_exception(PENDING_EXCEPTION, buf); \
   return; \
 } \
 (void)(0
@@ -132,10 +133,10 @@ void JVMCICompiler::compile_method(const methodHandle& method, int entry_bci, JV
       return;
   }
 
-  JVMCIRuntime::initialize_well_known_classes(CHECK_ABORT);
+  JVMCIRuntime::initialize_well_known_classes(CHECK_EXIT);
 
   HandleMark hm;
-  Handle receiver = JVMCIRuntime::get_HotSpotJVMCIRuntime(CHECK_ABORT);
+  Handle receiver = JVMCIRuntime::get_HotSpotJVMCIRuntime(CHECK_EXIT);
 
   JavaValue method_result(T_OBJECT);
   JavaCallArguments args;
@@ -171,15 +172,15 @@ void JVMCICompiler::compile_method(const methodHandle& method, int entry_bci, JV
   } else {
     oop result_object = (oop) result.get_jobject();
     if (result_object != NULL) {
-      oop failure_message = CompilationRequestResult::failureMessage(result_object);
+      oop failure_message = HotSpotCompilationRequestResult::failureMessage(result_object);
       if (failure_message != NULL) {
         const char* failure_reason = java_lang_String::as_utf8_string(failure_message);
-        env->set_failure(failure_reason, CompilationRequestResult::retry(result_object) != 0);
+        env->set_failure(failure_reason, HotSpotCompilationRequestResult::retry(result_object) != 0);
       } else {
         if (env->task()->code() == NULL) {
           env->set_failure("no nmethod produced", true);
         } else {
-          env->task()->set_num_inlined_bytecodes(CompilationRequestResult::inlinedBytecodes(result_object));
+          env->task()->set_num_inlined_bytecodes(HotSpotCompilationRequestResult::inlinedBytecodes(result_object));
           Atomic::inc(&_methods_compiled);
         }
       }
@@ -187,25 +188,36 @@ void JVMCICompiler::compile_method(const methodHandle& method, int entry_bci, JV
       assert(false, "JVMCICompiler.compileMethod should always return non-null");
     }
   }
+  if (_bootstrapping) {
+    _bootstrap_compilation_request_handled = true;
+  }
 }
 
-/**
- * Aborts the VM due to an unexpected exception.
- */
-void JVMCICompiler::abort_on_pending_exception(Handle exception, const char* message, bool dump_core) {
-  Thread* THREAD = Thread::current();
+CompLevel JVMCIRuntime::adjust_comp_level(methodHandle method, bool is_osr, CompLevel level, JavaThread* thread) {
+  if (!thread->adjusting_comp_level()) {
+    thread->set_adjusting_comp_level(true);
+    level = adjust_comp_level_inner(method, is_osr, level, thread);
+    thread->set_adjusting_comp_level(false);
+  }
+  return level;
+}
+
+void JVMCICompiler::exit_on_pending_exception(Handle exception, const char* message) {
+  JavaThread* THREAD = JavaThread::current();
   CLEAR_PENDING_EXCEPTION;
 
-  java_lang_Throwable::java_printStackTrace(exception, THREAD);
+  static volatile int report_error = 0;
+  if (!report_error && Atomic::cmpxchg(1, &report_error, 0) == 0) {
+    // Only report an error once
+    tty->print_raw_cr(message);
+    java_lang_Throwable::java_printStackTrace(exception, THREAD);
+  } else {
+    // Allow error reporting thread to print the stack trace.
+    os::sleep(THREAD, 200, false);
+  }
 
-  // Give other aborting threads to also print their stack traces.
-  // This can be very useful when debugging class initialization
-  // failures.
-  assert(THREAD->is_Java_thread(), "compiler threads should be Java threads");
-  const bool interruptible = true;
-  os::sleep(THREAD, 200, interruptible);
-
-  vm_abort(dump_core);
+  before_exit(THREAD);
+  vm_exit(-1);
 }
 
 // Compilation entry point for methods

@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2003, 2015, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2015 SAP SE. All rights reserved.
+ * Copyright (c) 2003, 2016, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2016 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,7 @@
 
 #include "precompiled.hpp"
 #include "asm/macroAssembler.inline.hpp"
-#include "interp_masm_ppc_64.hpp"
+#include "interp_masm_ppc.hpp"
 #include "interpreter/interpreterRuntime.hpp"
 #include "prims/jvmtiThreadState.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -261,6 +261,9 @@ void InterpreterMacroAssembler::push_ptr(Register r) {
 }
 
 void InterpreterMacroAssembler::push_l(Register r) {
+  // Clear unused slot.
+  load_const_optimized(R0, 0L);
+  std(R0, 0, R15_esp);
   std(r, - Interpreter::stackElementSize, R15_esp);
   addi(R15_esp, R15_esp, - 2 * Interpreter::stackElementSize );
 }
@@ -476,31 +479,6 @@ void InterpreterMacroAssembler::gen_subtype_check(Register Rsub_klass, Register 
   profile_typecheck(Rsub_klass, Rtmp1, Rtmp2);
   check_klass_subtype(Rsub_klass, Rsuper_klass, Rtmp1, Rtmp2, ok_is_subtype);
   profile_typecheck_failed(Rtmp1, Rtmp2);
-}
-
-void InterpreterMacroAssembler::generate_stack_overflow_check_with_compare_and_throw(Register Rmem_frame_size, Register Rscratch1) {
-  Label done;
-  sub(Rmem_frame_size, R1_SP, Rmem_frame_size);
-  ld(Rscratch1, thread_(stack_overflow_limit));
-  cmpld(CCR0/*is_stack_overflow*/, Rmem_frame_size, Rscratch1);
-  bgt(CCR0/*is_stack_overflow*/, done);
-
-  // Load target address of the runtime stub.
-  assert(StubRoutines::throw_StackOverflowError_entry() != NULL, "generated in wrong order");
-  load_const_optimized(Rscratch1, (StubRoutines::throw_StackOverflowError_entry()), R0);
-  mtctr(Rscratch1);
-  // Restore caller_sp.
-#ifdef ASSERT
-  ld(Rscratch1, 0, R1_SP);
-  ld(R0, 0, R21_sender_SP);
-  cmpd(CCR0, R0, Rscratch1);
-  asm_assert_eq("backlink", 0x547);
-#endif // ASSERT
-  mr(R1_SP, R21_sender_SP);
-  bctr();
-
-  align(32, 12);
-  bind(done);
 }
 
 // Separate these two to allow for delay slot in middle.
@@ -805,16 +783,41 @@ void InterpreterMacroAssembler::narrow(Register result) {
 void InterpreterMacroAssembler::remove_activation(TosState state,
                                                   bool throw_monitor_exception,
                                                   bool install_monitor_exception) {
+  BLOCK_COMMENT("remove_activation {");
   unlock_if_synchronized_method(state, throw_monitor_exception, install_monitor_exception);
 
   // Save result (push state before jvmti call and pop it afterwards) and notify jvmti.
   notify_method_exit(false, state, NotifyJVMTI, true);
+
+  BLOCK_COMMENT("reserved_stack_check:");
+  if (StackReservedPages > 0) {
+    // Test if reserved zone needs to be enabled.
+    Label no_reserved_zone_enabling;
+
+    // Compare frame pointers. There is no good stack pointer, as with stack
+    // frame compression we can get different SPs when we do calls. A subsequent
+    // call could have a smaller SP, so that this compare succeeds for an
+    // inner call of the method annotated with ReservedStack.
+    ld_ptr(R0, JavaThread::reserved_stack_activation_offset(), R16_thread);
+    ld_ptr(R11_scratch1, _abi(callers_sp), R1_SP); // Load frame pointer.
+    cmpld(CCR0, R11_scratch1, R0);
+    blt_predict_taken(CCR0, no_reserved_zone_enabling);
+
+    // Enable reserved zone again, throw stack overflow exception.
+    call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::enable_stack_reserved_zone), R16_thread);
+    call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::throw_delayed_StackOverflowError));
+
+    should_not_reach_here();
+
+    bind(no_reserved_zone_enabling);
+  }
 
   verify_oop(R17_tos, state);
   verify_thread();
 
   merge_frames(/*top_frame_sp*/ R21_sender_SP, /*return_pc*/ R0, R11_scratch1, R12_scratch2);
   mtlr(R0);
+  BLOCK_COMMENT("} remove_activation");
 }
 
 // Lock object

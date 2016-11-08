@@ -40,6 +40,7 @@ import javax.print.attribute.AttributeSet;
 import javax.print.attribute.PrintRequestAttributeSet;
 import javax.print.attribute.standard.Destination;
 import javax.print.attribute.standard.Fidelity;
+import sun.print.DialogOwner;
 
 import sun.print.ServiceDialog;
 import sun.print.SunAlternateMedia;
@@ -134,7 +135,9 @@ public class ServiceUI {
      *
      * @param gc used to select screen. null means primary or default screen.
      * @param x location of dialog including border in screen coordinates
+     * relative to the origin of {@code gc}.
      * @param y location of dialog including border in screen coordinates
+     * relative to the origin of {@code gc}.
      * @param services to be browsable, must be non-null.
      * @param defaultService initial PrintService to display.
      * @param flavor the flavor to be printed, or null.
@@ -185,9 +188,8 @@ public class ServiceUI {
             defaultIndex = 0;
         }
 
-        // For now we set owner to null. In the future, it may be passed
-        // as an argument.
-        Window owner = null;
+        DialogOwner dlgOwner = (DialogOwner)attributes.get(DialogOwner.class);
+        Window owner = (dlgOwner != null) ? dlgOwner.getOwner() : null;
 
         Rectangle gcBounds = (gc == null) ?  GraphicsEnvironment.
             getLocalGraphicsEnvironment().getDefaultScreenDevice().

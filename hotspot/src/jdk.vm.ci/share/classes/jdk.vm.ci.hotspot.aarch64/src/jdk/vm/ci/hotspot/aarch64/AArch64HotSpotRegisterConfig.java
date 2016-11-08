@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -49,8 +49,6 @@ import static jdk.vm.ci.aarch64.AArch64.v7;
 import static jdk.vm.ci.aarch64.AArch64.zr;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -60,57 +58,51 @@ import jdk.vm.ci.code.Architecture;
 import jdk.vm.ci.code.CallingConvention;
 import jdk.vm.ci.code.CallingConvention.Type;
 import jdk.vm.ci.code.Register;
+import jdk.vm.ci.code.RegisterArray;
 import jdk.vm.ci.code.RegisterAttributes;
 import jdk.vm.ci.code.RegisterConfig;
 import jdk.vm.ci.code.StackSlot;
 import jdk.vm.ci.code.TargetDescription;
+import jdk.vm.ci.code.ValueKindFactory;
 import jdk.vm.ci.common.JVMCIError;
 import jdk.vm.ci.hotspot.HotSpotCallingConventionType;
-import jdk.vm.ci.hotspot.HotSpotVMConfig;
 import jdk.vm.ci.meta.AllocatableValue;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.JavaType;
-import jdk.vm.ci.meta.LIRKind;
 import jdk.vm.ci.meta.PlatformKind;
 import jdk.vm.ci.meta.Value;
+import jdk.vm.ci.meta.ValueKind;
 
 public class AArch64HotSpotRegisterConfig implements RegisterConfig {
 
-    private final Architecture architecture;
+    private final TargetDescription target;
 
-    private final Register[] allocatable;
-
-    private final int maxFrameSize;
+    private final RegisterArray allocatable;
 
     /**
      * The caller saved registers always include all parameter registers.
      */
-    private final Register[] callerSaved;
+    private final RegisterArray callerSaved;
 
     private final boolean allAllocatableAreCallerSaved;
 
     private final RegisterAttributes[] attributesMap;
 
-    public int getMaximumFrameSize() {
-        return maxFrameSize;
+    @Override
+    public RegisterArray getAllocatableRegisters() {
+        return allocatable;
     }
 
     @Override
-    public Register[] getAllocatableRegisters() {
-        return allocatable.clone();
-    }
-
-    @Override
-    public Register[] filterAllocatableRegisters(PlatformKind kind, Register[] registers) {
+    public RegisterArray filterAllocatableRegisters(PlatformKind kind, RegisterArray registers) {
         ArrayList<Register> list = new ArrayList<>();
         for (Register reg : registers) {
-            if (architecture.canStoreValue(reg.getRegisterCategory(), kind)) {
+            if (target.arch.canStoreValue(reg.getRegisterCategory(), kind)) {
                 list.add(reg);
             }
         }
 
-        Register[] ret = list.toArray(new Register[list.size()]);
-        return ret;
+        return new RegisterArray(list);
     }
 
     @Override
@@ -118,9 +110,9 @@ public class AArch64HotSpotRegisterConfig implements RegisterConfig {
         return attributesMap.clone();
     }
 
-    private final Register[] javaGeneralParameterRegisters = {r1, r2, r3, r4, r5, r6, r7, r0};
-    private final Register[] nativeGeneralParameterRegisters = {r0, r1, r2, r3, r4, r5, r6, r7};
-    private final Register[] simdParameterRegisters = {v0, v1, v2, v3, v4, v5, v6, v7};
+    private final RegisterArray javaGeneralParameterRegisters = new RegisterArray(r1, r2, r3, r4, r5, r6, r7, r0);
+    private final RegisterArray nativeGeneralParameterRegisters = new RegisterArray(r0, r1, r2, r3, r4, r5, r6, r7);
+    private final RegisterArray simdParameterRegisters = new RegisterArray(v0, v1, v2, v3, v4, v5, v6, v7);
 
     public static final Register inlineCacheRegister = r9;
 
@@ -133,12 +125,12 @@ public class AArch64HotSpotRegisterConfig implements RegisterConfig {
     public static final Register threadRegister = r28;
     public static final Register fp = r29;
 
-    private static final Register[] reservedRegisters = {threadRegister, fp, lr, r31, zr, sp};
+    private static final RegisterArray reservedRegisters = new RegisterArray(threadRegister, fp, lr, r31, zr, sp);
 
-    private static Register[] initAllocatable(Architecture arch, boolean reserveForHeapBase) {
-        Register[] allRegisters = arch.getAvailableValueRegisters();
-        Register[] registers = new Register[allRegisters.length - reservedRegisters.length - (reserveForHeapBase ? 1 : 0)];
-        List<Register> reservedRegistersList = Arrays.asList(reservedRegisters);
+    private static RegisterArray initAllocatable(Architecture arch, boolean reserveForHeapBase) {
+        RegisterArray allRegisters = arch.getAvailableValueRegisters();
+        Register[] registers = new Register[allRegisters.size() - reservedRegisters.size() - (reserveForHeapBase ? 1 : 0)];
+        List<Register> reservedRegistersList = reservedRegisters.asList();
 
         int idx = 0;
         for (Register reg : allRegisters) {
@@ -156,36 +148,35 @@ public class AArch64HotSpotRegisterConfig implements RegisterConfig {
         }
 
         assert idx == registers.length;
-        return registers;
+        return new RegisterArray(registers);
     }
 
-    public AArch64HotSpotRegisterConfig(Architecture architecture, HotSpotVMConfig config) {
-        this(architecture, config, initAllocatable(architecture, config.useCompressedOops));
-        assert callerSaved.length >= allocatable.length;
+    public AArch64HotSpotRegisterConfig(TargetDescription target, boolean useCompressedOops) {
+        this(target, initAllocatable(target.arch, useCompressedOops));
+        assert callerSaved.size() >= allocatable.size();
     }
 
-    public AArch64HotSpotRegisterConfig(Architecture architecture, HotSpotVMConfig config, Register[] allocatable) {
-        this.architecture = architecture;
-        this.maxFrameSize = config.maxFrameSize;
+    public AArch64HotSpotRegisterConfig(TargetDescription target, RegisterArray allocatable) {
+        this.target = target;
 
-        this.allocatable = allocatable.clone();
+        this.allocatable = allocatable;
         Set<Register> callerSaveSet = new HashSet<>();
-        Collections.addAll(callerSaveSet, allocatable);
-        Collections.addAll(callerSaveSet, simdParameterRegisters);
-        Collections.addAll(callerSaveSet, javaGeneralParameterRegisters);
-        Collections.addAll(callerSaveSet, nativeGeneralParameterRegisters);
-        callerSaved = callerSaveSet.toArray(new Register[callerSaveSet.size()]);
+        allocatable.addTo(callerSaveSet);
+        simdParameterRegisters.addTo(callerSaveSet);
+        javaGeneralParameterRegisters.addTo(callerSaveSet);
+        nativeGeneralParameterRegisters.addTo(callerSaveSet);
+        callerSaved = new RegisterArray(callerSaveSet);
 
         allAllocatableAreCallerSaved = true;
         attributesMap = RegisterAttributes.createMap(this, AArch64.allRegisters);
     }
 
     @Override
-    public Register[] getCallerSaveRegisters() {
+    public RegisterArray getCallerSaveRegisters() {
         return callerSaved;
     }
 
-    public Register[] getCalleeSaveRegisters() {
+    public RegisterArray getCalleeSaveRegisters() {
         return null;
     }
 
@@ -195,23 +186,18 @@ public class AArch64HotSpotRegisterConfig implements RegisterConfig {
     }
 
     @Override
-    public Register getRegisterForRole(int index) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CallingConvention getCallingConvention(Type type, JavaType returnType, JavaType[] parameterTypes, TargetDescription target) {
+    public CallingConvention getCallingConvention(Type type, JavaType returnType, JavaType[] parameterTypes, ValueKindFactory<?> valueKindFactory) {
         HotSpotCallingConventionType hotspotType = (HotSpotCallingConventionType) type;
         if (type == HotSpotCallingConventionType.NativeCall) {
-            return callingConvention(nativeGeneralParameterRegisters, returnType, parameterTypes, hotspotType, target);
+            return callingConvention(nativeGeneralParameterRegisters, returnType, parameterTypes, hotspotType, valueKindFactory);
         }
         // On x64, parameter locations are the same whether viewed
         // from the caller or callee perspective
-        return callingConvention(javaGeneralParameterRegisters, returnType, parameterTypes, hotspotType, target);
+        return callingConvention(javaGeneralParameterRegisters, returnType, parameterTypes, hotspotType, valueKindFactory);
     }
 
     @Override
-    public Register[] getCallingConventionRegisters(Type type, JavaKind kind) {
+    public RegisterArray getCallingConventionRegisters(Type type, JavaKind kind) {
         HotSpotCallingConventionType hotspotType = (HotSpotCallingConventionType) type;
         switch (kind) {
             case Boolean:
@@ -230,7 +216,8 @@ public class AArch64HotSpotRegisterConfig implements RegisterConfig {
         }
     }
 
-    private CallingConvention callingConvention(Register[] generalParameterRegisters, JavaType returnType, JavaType[] parameterTypes, HotSpotCallingConventionType type, TargetDescription target) {
+    private CallingConvention callingConvention(RegisterArray generalParameterRegisters, JavaType returnType, JavaType[] parameterTypes, HotSpotCallingConventionType type,
+                    ValueKindFactory<?> valueKindFactory) {
         AllocatableValue[] locations = new AllocatableValue[parameterTypes.length];
 
         int currentGeneral = 0;
@@ -248,16 +235,16 @@ public class AArch64HotSpotRegisterConfig implements RegisterConfig {
                 case Int:
                 case Long:
                 case Object:
-                    if (currentGeneral < generalParameterRegisters.length) {
-                        Register register = generalParameterRegisters[currentGeneral++];
-                        locations[i] = register.asValue(target.getLIRKind(kind));
+                    if (currentGeneral < generalParameterRegisters.size()) {
+                        Register register = generalParameterRegisters.get(currentGeneral++);
+                        locations[i] = register.asValue(valueKindFactory.getValueKind(kind));
                     }
                     break;
                 case Float:
                 case Double:
-                    if (currentSIMD < simdParameterRegisters.length) {
-                        Register register = simdParameterRegisters[currentSIMD++];
-                        locations[i] = register.asValue(target.getLIRKind(kind));
+                    if (currentSIMD < simdParameterRegisters.size()) {
+                        Register register = simdParameterRegisters.get(currentSIMD++);
+                        locations[i] = register.asValue(valueKindFactory.getValueKind(kind));
                     }
                     break;
                 default:
@@ -265,14 +252,14 @@ public class AArch64HotSpotRegisterConfig implements RegisterConfig {
             }
 
             if (locations[i] == null) {
-                LIRKind lirKind = target.getLIRKind(kind);
-                locations[i] = StackSlot.get(lirKind, currentStackOffset, !type.out);
-                currentStackOffset += Math.max(lirKind.getPlatformKind().getSizeInBytes(), target.wordSize);
+                ValueKind<?> valueKind = valueKindFactory.getValueKind(kind);
+                locations[i] = StackSlot.get(valueKind, currentStackOffset, !type.out);
+                currentStackOffset += Math.max(valueKind.getPlatformKind().getSizeInBytes(), target.wordSize);
             }
         }
 
         JavaKind returnKind = returnType == null ? JavaKind.Void : returnType.getJavaKind();
-        AllocatableValue returnLocation = returnKind == JavaKind.Void ? Value.ILLEGAL : getReturnRegister(returnKind).asValue(target.getLIRKind(returnKind.getStackKind()));
+        AllocatableValue returnLocation = returnKind == JavaKind.Void ? Value.ILLEGAL : getReturnRegister(returnKind).asValue(valueKindFactory.getValueKind(returnKind.getStackKind()));
         return new CallingConvention(currentStackOffset, returnLocation, locations);
     }
 
@@ -305,6 +292,6 @@ public class AArch64HotSpotRegisterConfig implements RegisterConfig {
 
     @Override
     public String toString() {
-        return String.format("Allocatable: " + Arrays.toString(getAllocatableRegisters()) + "%n" + "CallerSave:  " + Arrays.toString(getCallerSaveRegisters()) + "%n");
+        return String.format("Allocatable: " + getAllocatableRegisters() + "%n" + "CallerSave:  " + getCallerSaveRegisters() + "%n");
     }
 }

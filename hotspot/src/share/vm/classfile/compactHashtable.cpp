@@ -38,6 +38,7 @@
 CompactHashtableWriter::CompactHashtableWriter(int num_buckets,
                                                CompactHashtableStats* stats) {
   assert(DumpSharedSpaces, "dump-time only");
+  assert(num_buckets > 0, "no buckets");
   _num_buckets = num_buckets;
   _num_entries = 0;
   _buckets = NEW_C_HEAP_ARRAY(GrowableArray<Entry>*, _num_buckets, mtSymbol);
@@ -247,7 +248,7 @@ inline void SimpleCompactHashtable::iterate(const I& iterator) {
     } else {
       u4*entry_max = _entries + BUCKET_OFFSET(_buckets[i + 1]);
       while (entry < entry_max) {
-        iterator.do_value(_base_address, entry[0]);
+        iterator.do_value(_base_address, entry[1]);
         entry += 2;
       }
     }

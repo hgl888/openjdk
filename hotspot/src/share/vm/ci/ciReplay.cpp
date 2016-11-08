@@ -29,7 +29,6 @@
 #include "ci/ciKlass.hpp"
 #include "ci/ciUtilities.hpp"
 #include "compiler/compileBroker.hpp"
-#include "gc/shared/referencePendingListLocker.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/oopFactory.hpp"
 #include "memory/resourceArea.hpp"
@@ -490,7 +489,8 @@ class CompileReplay : public StackObj {
     int comp_level = parse_int(comp_level_label);
     // old version w/o comp_level
     if (had_error() && (error_message() == comp_level_label)) {
-      comp_level = CompLevel_full_optimization;
+      // use highest available tier
+      comp_level = TieredCompilation ? TieredStopAtLevel : CompLevel_highest_tier;
     }
     if (!is_valid_comp_level(comp_level)) {
       return;
@@ -576,9 +576,7 @@ class CompileReplay : public StackObj {
     Method* method = parse_method(CHECK);
     if (had_error()) return;
     /* just copied from Method, to build interpret data*/
-    if (ReferencePendingListLocker::is_locked_by_self()) {
-      return;
-    }
+
     // To be properly initialized, some profiling in the MDO needs the
     // method to be rewritten (number of arguments at a call for
     // instance)
@@ -823,7 +821,7 @@ class CompileReplay : public StackObj {
         int value = atoi(string_value);
         java_mirror->short_field_put(fd.offset(), value);
       } else if (strcmp(field_signature, "Z") == 0) {
-        int value = atol(string_value);
+        int value = atoi(string_value);
         java_mirror->bool_field_put(fd.offset(), value);
       } else if (strcmp(field_signature, "J") == 0) {
         jlong value;

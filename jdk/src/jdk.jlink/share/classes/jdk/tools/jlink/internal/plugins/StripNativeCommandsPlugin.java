@@ -24,18 +24,16 @@
  */
 package jdk.tools.jlink.internal.plugins;
 
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
-import jdk.tools.jlink.plugin.ModuleEntry;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.plugin.TransformerPlugin;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.ResourcePoolBuilder;
+import jdk.tools.jlink.plugin.ResourcePoolEntry;
+import jdk.tools.jlink.plugin.Plugin;
 
 /**
  *
  * Strip Native Commands plugin
  */
-public final class StripNativeCommandsPlugin implements TransformerPlugin {
+public final class StripNativeCommandsPlugin implements Plugin {
 
     public static final String NAME = "strip-native-commands";
 
@@ -45,17 +43,17 @@ public final class StripNativeCommandsPlugin implements TransformerPlugin {
     }
 
     @Override
-    public Set<Category> getType() {
-        Set<Category> set = new HashSet<>();
-        set.add(Category.FILTER);
-        return Collections.unmodifiableSet(set);
+    public Category getType() {
+        return Category.FILTER;
     }
 
     @Override
-    public void visit(ModulePool in, ModulePool out) {
+    public ResourcePool transform(ResourcePool in, ResourcePoolBuilder out) {
         in.transformAndCopy((file) -> {
-            return file.getType() == ModuleEntry.Type.NATIVE_CMD ? null : file;
+            return file.type() == ResourcePoolEntry.Type.NATIVE_CMD ? null : file;
         }, out);
+
+        return out.build();
     }
 
     @Override

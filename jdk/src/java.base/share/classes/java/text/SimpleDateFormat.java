@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1996, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1996, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -276,9 +276,16 @@ import sun.util.locale.provider.LocaleProviderAdapter;
  *     it is interpreted as a <a href="#number">number</a>.<br>
  *     <ul>
  *     <li>Letter <em>M</em> produces context-sensitive month names, such as the
- *         embedded form of names. If a {@code DateFormatSymbols} has been set
- *         explicitly with constructor {@link #SimpleDateFormat(String,
- *         DateFormatSymbols)} or method {@link
+ *         embedded form of names. Letter <em>M</em> is context-sensitive in the
+ *         sense that when it is used in the standalone pattern, for example,
+ *         "MMMM", it gives the standalone form of a month name and when it is
+ *         used in the pattern containing other field(s), for example, "d MMMM",
+ *         it gives the format form of a month name. For example, January in the
+ *         Catalan language is "de gener" in the format form while it is "gener"
+ *         in the standalone form. In this case, "MMMM" will produce "gener" and
+ *         the month part of the "d MMMM" will produce "de gener". If a
+ *         {@code DateFormatSymbols} has been set explicitly with constructor
+ *         {@link #SimpleDateFormat(String,DateFormatSymbols)} or method {@link
  *         #setDateFormatSymbols(DateFormatSymbols)}, the month names given by
  *         the {@code DateFormatSymbols} are used.</li>
  *     <li>Letter <em>L</em> produces the standalone form of month names.</li>
@@ -1491,22 +1498,18 @@ public class SimpleDateFormat extends DateFormat {
 
                 if (i < compiledPattern.length) {
                     int nextTag = compiledPattern[i] >>> 8;
-                    if (!(nextTag == TAG_QUOTE_ASCII_CHAR ||
-                          nextTag == TAG_QUOTE_CHARS)) {
-                        obeyCount = true;
-                    }
+                    int nextCount = compiledPattern[i] & 0xff;
+                    obeyCount = shouldObeyCount(nextTag, nextCount);
 
                     if (hasFollowingMinusSign &&
                         (nextTag == TAG_QUOTE_ASCII_CHAR ||
                          nextTag == TAG_QUOTE_CHARS)) {
-                        int c;
-                        if (nextTag == TAG_QUOTE_ASCII_CHAR) {
-                            c = compiledPattern[i] & 0xff;
-                        } else {
-                            c = compiledPattern[i+1];
+
+                        if (nextTag != TAG_QUOTE_ASCII_CHAR) {
+                            nextCount = compiledPattern[i+1];
                         }
 
-                        if (c == minusSign) {
+                        if (nextCount == minusSign) {
                             useFollowingMinusSignAsDelimiter = true;
                         }
                     }
@@ -1547,6 +1550,36 @@ public class SimpleDateFormat extends DateFormat {
         }
 
         return parsedDate;
+    }
+
+    /* If the next tag/pattern is a <Numeric_Field> then the parser
+     * should consider the count of digits while parsing the contigous digits
+     * for the current tag/pattern
+     */
+    private boolean shouldObeyCount(int tag, int count) {
+        switch (tag) {
+            case PATTERN_MONTH:
+            case PATTERN_MONTH_STANDALONE:
+                return count <= 2;
+            case PATTERN_YEAR:
+            case PATTERN_DAY_OF_MONTH:
+            case PATTERN_HOUR_OF_DAY1:
+            case PATTERN_HOUR_OF_DAY0:
+            case PATTERN_MINUTE:
+            case PATTERN_SECOND:
+            case PATTERN_MILLISECOND:
+            case PATTERN_DAY_OF_YEAR:
+            case PATTERN_DAY_OF_WEEK_IN_MONTH:
+            case PATTERN_WEEK_OF_YEAR:
+            case PATTERN_WEEK_OF_MONTH:
+            case PATTERN_HOUR1:
+            case PATTERN_HOUR0:
+            case PATTERN_WEEK_YEAR:
+            case PATTERN_ISO_DAY_OF_WEEK:
+                return true;
+            default:
+                return false;
+        }
     }
 
     /**

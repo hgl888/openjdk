@@ -22,6 +22,11 @@
  */
 
 import jdk.testlibrary.OutputAnalyzer;
+import jdk.testlibrary.ProcessTools;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * Base class.
@@ -118,13 +123,13 @@ public abstract class Test {
             + "and this jar is not timestamped. "
             + "Without a timestamp, users may not be able to validate this jar "
             + "after the signer certificate's expiration date "
-            + "(%1$tY-%1$tm-%1$td) or after any future revocation date.";
+            + "(%1$tY-%1$tm-%1$td).";
 
     static final String NO_TIMESTAMP_VERIFYING_WARN_TEMPLATE
-            = "This jar contains signatures that does not include a timestamp. "
+            = "This jar contains signatures that do not include a timestamp. "
             + "Without a timestamp, users may not be able to validate this jar "
-            + "after the signer certificate's expiration date "
-            + "(%1$tY-%1$tm-%1$td) or after any future revocation date.";
+            + "after any of the signer certificates expire "
+            + "(as early as %1$tY-%1$tm-%1$td).";
 
     static final String NOT_YET_VALID_CERT_SIGNING_WARNING
             = "The signer certificate is not yet valid.";
@@ -174,5 +179,22 @@ public abstract class Test {
             analyzer.shouldContain(WARNING);
         }
         analyzer.shouldContain(JAR_SIGNED);
+    }
+
+    protected OutputAnalyzer keytool(String... cmd) throws Throwable {
+        return tool(KEYTOOL, cmd);
+    }
+
+    protected OutputAnalyzer jarsigner(String... cmd) throws Throwable {
+        return tool(JARSIGNER, cmd);
+    }
+
+    private OutputAnalyzer tool(String tool, String... args) throws Throwable {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(tool);
+        cmd.add("-J-Duser.language=en");
+        cmd.add("-J-Duser.country=US");
+        cmd.addAll(Arrays.asList(args));
+        return ProcessTools.executeCommand(cmd.toArray(new String[cmd.size()]));
     }
 }

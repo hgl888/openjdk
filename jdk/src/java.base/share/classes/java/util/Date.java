@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1994, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1994, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -85,12 +85,12 @@ import sun.util.calendar.ZoneInfo;
  * further information is the U.S. Naval Observatory, particularly
  * the Directorate of Time at:
  * <blockquote><pre>
- *     <a href=http://tycho.usno.navy.mil>http://tycho.usno.navy.mil</a>
+ *     <a href="http://www.usno.navy.mil">http://www.usno.navy.mil</a>
  * </pre></blockquote>
  * <p>
  * and their definitions of "Systems of Time" at:
  * <blockquote><pre>
- *     <a href=http://tycho.usno.navy.mil/systime.html>http://tycho.usno.navy.mil/systime.html</a>
+ *     <a href="http://www.usno.navy.mil/USNO/time/master-clock/systems-of-time">http://www.usno.navy.mil/USNO/time/master-clock/systems-of-time</a>
  * </pre></blockquote>
  * <p>
  * In all methods of class {@code Date} that accept or return
@@ -952,6 +952,9 @@ public class Date
      * without affecting its internal state.
      */
     static final long getMillisOf(Date date) {
+        if (date.getClass() != Date.class) {
+            return date.getTime();
+        }
         if (date.cdate == null || date.cdate.isNormalized()) {
             return date.fastTime;
         }

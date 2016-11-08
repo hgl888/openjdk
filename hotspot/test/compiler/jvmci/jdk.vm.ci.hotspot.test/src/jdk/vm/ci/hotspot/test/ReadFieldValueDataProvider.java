@@ -23,22 +23,22 @@
 
 package jdk.vm.ci.hotspot.test;
 
+import jdk.vm.ci.meta.JavaConstant;
+import org.testng.annotations.DataProvider;
+
+import java.util.LinkedList;
+
 import static jdk.vm.ci.hotspot.test.TestHelper.ARRAYS_MAP;
 import static jdk.vm.ci.hotspot.test.TestHelper.ARRAY_ARRAYS_MAP;
 import static jdk.vm.ci.hotspot.test.TestHelper.CONSTANT_REFLECTION_PROVIDER;
 import static jdk.vm.ci.hotspot.test.TestHelper.DUMMY_CLASS_CONSTANT;
 import static jdk.vm.ci.hotspot.test.TestHelper.DUMMY_CLASS_INSTANCE;
+import static jdk.vm.ci.hotspot.test.TestHelper.INSTANCE_FIELDS_MAP;
+import static jdk.vm.ci.hotspot.test.TestHelper.INSTANCE_STABLE_FIELDS_MAP;
 import static jdk.vm.ci.hotspot.test.TestHelper.STABLE_ARRAYS_MAP;
 import static jdk.vm.ci.hotspot.test.TestHelper.STABLE_ARRAY_ARRAYS_MAP;
-import static jdk.vm.ci.hotspot.test.TestHelper.INSTANCE_STABLE_FIELDS_MAP;
-import static jdk.vm.ci.hotspot.test.TestHelper.INSTANCE_FIELDS_MAP;
 import static jdk.vm.ci.hotspot.test.TestHelper.STATIC_FIELDS_MAP;
 import static jdk.vm.ci.hotspot.test.TestHelper.STATIC_STABLE_FIELDS_MAP;
-
-import java.util.LinkedList;
-import jdk.vm.ci.meta.JavaConstant;
-import org.testng.annotations.DataProvider;
-
 
 public class ReadFieldValueDataProvider {
 
@@ -48,8 +48,8 @@ public class ReadFieldValueDataProvider {
         // Testing instance non-stable fields
         INSTANCE_FIELDS_MAP.entrySet().stream().forEach((instanceField) -> {
             cfgSet.add(new Object[]{instanceField.getKey(),
-                    DUMMY_CLASS_CONSTANT,
-                    instanceField.getValue()});
+                            DUMMY_CLASS_CONSTANT,
+                            instanceField.getValue()});
         });
         // Testing static non-stable fields with null as receiver
         STATIC_FIELDS_MAP.entrySet().stream().forEach((staticField) -> {
@@ -58,14 +58,14 @@ public class ReadFieldValueDataProvider {
         // Testing static non-stable fields with JavaConstant.NULL_POINTER as receiver
         STATIC_FIELDS_MAP.entrySet().stream().forEach((staticField) -> {
             cfgSet.add(new Object[]{staticField.getKey(),
-                    JavaConstant.NULL_POINTER,
-                    staticField.getValue()});
+                            JavaConstant.NULL_POINTER,
+                            staticField.getValue()});
         });
         // Testing instance stable fields
         INSTANCE_STABLE_FIELDS_MAP.entrySet().stream().forEach((instanceField) -> {
             cfgSet.add(new Object[]{instanceField.getKey(),
-                    DUMMY_CLASS_CONSTANT,
-                    instanceField.getValue()});
+                            DUMMY_CLASS_CONSTANT,
+                            instanceField.getValue()});
         });
         // Testing static stable fields with null as receiver
         STATIC_STABLE_FIELDS_MAP.entrySet().stream().forEach((staticField) -> {
@@ -74,32 +74,32 @@ public class ReadFieldValueDataProvider {
         // Testing static stable fields with JavaConstant.NULL_POINTER as receiver
         STATIC_STABLE_FIELDS_MAP.entrySet().stream().forEach((staticField) -> {
             cfgSet.add(new Object[]{staticField.getKey(),
-                    JavaConstant.NULL_POINTER,
-                    staticField.getValue()});
+                            JavaConstant.NULL_POINTER,
+                            staticField.getValue()});
         });
         // Testing instance non-stable array fields
         ARRAYS_MAP.entrySet().stream().forEach((instanceField) -> {
             cfgSet.add(new Object[]{instanceField.getKey(),
-                    DUMMY_CLASS_CONSTANT,
-                    instanceField.getValue()});
+                            DUMMY_CLASS_CONSTANT,
+                            instanceField.getValue()});
         });
         // Testing instance stable array fields
         STABLE_ARRAYS_MAP.entrySet().stream().forEach((instanceField) -> {
             cfgSet.add(new Object[]{instanceField.getKey(),
-                    DUMMY_CLASS_CONSTANT,
-                    instanceField.getValue()});
+                            DUMMY_CLASS_CONSTANT,
+                            instanceField.getValue()});
         });
         // Testing instance non-stable array-of-array fields
         ARRAY_ARRAYS_MAP.entrySet().stream().forEach((instanceField) -> {
             cfgSet.add(new Object[]{instanceField.getKey(),
-                    DUMMY_CLASS_CONSTANT,
-                    instanceField.getValue()});
+                            DUMMY_CLASS_CONSTANT,
+                            instanceField.getValue()});
         });
         // Testing instance stable array-of-array fields
         STABLE_ARRAY_ARRAYS_MAP.entrySet().stream().forEach((instanceField) -> {
             cfgSet.add(new Object[]{instanceField.getKey(),
-                    DUMMY_CLASS_CONSTANT,
-                    instanceField.getValue()});
+                            DUMMY_CLASS_CONSTANT,
+                            instanceField.getValue()});
         });
         // Testing instance fields with JavaConstant.NULL_POINTER as receiver
         INSTANCE_FIELDS_MAP.entrySet().stream().forEach((instanceField) -> {
@@ -108,8 +108,8 @@ public class ReadFieldValueDataProvider {
         // Testing instance fields with an object that does not have the field
         INSTANCE_FIELDS_MAP.entrySet().stream().forEach((instanceField) -> {
             cfgSet.add(new Object[]{instanceField.getKey(),
-                    CONSTANT_REFLECTION_PROVIDER.forObject(DUMMY_CLASS_INSTANCE.objectField),
-                    null});
+                            CONSTANT_REFLECTION_PROVIDER.forObject(DUMMY_CLASS_INSTANCE.objectField),
+                            null});
         });
         return cfgSet.toArray(new Object[0][0]);
     }

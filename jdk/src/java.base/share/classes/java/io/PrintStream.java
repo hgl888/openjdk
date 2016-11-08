@@ -568,7 +568,7 @@ public class PrintStream extends FilterOutputStream
      * @param      b   The {@code boolean} to be printed
      */
     public void print(boolean b) {
-        write(b ? "true" : "false");
+        write(String.valueOf(b));
     }
 
     /**
@@ -663,10 +663,7 @@ public class PrintStream extends FilterOutputStream
      * @param      s   The {@code String} to be printed
      */
     public void print(String s) {
-        if (s == null) {
-            s = "null";
-        }
-        write(s);
+        write(String.valueOf(s));
     }
 
     /**
@@ -930,8 +927,10 @@ public class PrintStream extends FilterOutputStream
      * format string and arguments.
      *
      * <p> The locale always used is the one returned by {@link
-     * java.util.Locale#getDefault() Locale.getDefault()}, regardless of any
-     * previous invocations of other formatting methods on this object.
+     * java.util.Locale#getDefault(Locale.Category)} with
+     * {@link java.util.Locale.Category#FORMAT FORMAT} category specified,
+     * regardless of any previous invocations of other formatting methods on
+     * this object.
      *
      * @param  format
      *         A format string as described in <a
@@ -969,9 +968,11 @@ public class PrintStream extends FilterOutputStream
             synchronized (this) {
                 ensureOpen();
                 if ((formatter == null)
-                    || (formatter.locale() != Locale.getDefault()))
+                    || (formatter.locale() !=
+                        Locale.getDefault(Locale.Category.FORMAT)))
                     formatter = new Formatter((Appendable) this);
-                formatter.format(Locale.getDefault(), format, args);
+                formatter.format(Locale.getDefault(Locale.Category.FORMAT),
+                                 format, args);
             }
         } catch (InterruptedIOException x) {
             Thread.currentThread().interrupt();
@@ -1064,10 +1065,7 @@ public class PrintStream extends FilterOutputStream
      * @since  1.5
      */
     public PrintStream append(CharSequence csq) {
-        if (csq == null)
-            print("null");
-        else
-            print(csq.toString());
+        print(String.valueOf(csq));
         return this;
     }
 
@@ -1107,9 +1105,8 @@ public class PrintStream extends FilterOutputStream
      * @since  1.5
      */
     public PrintStream append(CharSequence csq, int start, int end) {
-        CharSequence cs = (csq == null ? "null" : csq);
-        write(cs.subSequence(start, end).toString());
-        return this;
+        if (csq == null) csq = "null";
+        return append(csq.subSequence(start, end));
     }
 
     /**

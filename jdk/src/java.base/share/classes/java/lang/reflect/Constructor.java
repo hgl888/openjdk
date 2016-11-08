@@ -29,6 +29,7 @@ import jdk.internal.misc.SharedSecrets;
 import jdk.internal.reflect.CallerSensitive;
 import jdk.internal.reflect.ConstructorAccessor;
 import jdk.internal.reflect.Reflection;
+import jdk.internal.vm.annotation.ForceInline;
 import sun.reflect.annotation.TypeAnnotation;
 import sun.reflect.annotation.TypeAnnotationParser;
 import sun.reflect.generics.repository.ConstructorRepository;
@@ -435,13 +436,14 @@ public final class Constructor<T> extends Executable {
      *              by this method fails.
      */
     @CallerSensitive
+    @ForceInline // to ensure Reflection.getCallerClass optimization
     public T newInstance(Object ... initargs)
         throws InstantiationException, IllegalAccessException,
                IllegalArgumentException, InvocationTargetException
     {
         if (!override) {
             Class<?> caller = Reflection.getCallerClass();
-            checkAccess(caller, clazz, null, modifiers);
+            checkAccess(caller, clazz, clazz, modifiers);
         }
         if ((clazz.getModifiers() & Modifier.ENUM) != 0)
             throw new IllegalArgumentException("Cannot reflectively create enum objects");

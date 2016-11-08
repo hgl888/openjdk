@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,7 @@
 /*
  * COPYRIGHT AND PERMISSION NOTICE
  *
- * Copyright (C) 1991-2015 Unicode, Inc. All rights reserved.
+ * Copyright (C) 1991-2016 Unicode, Inc. All rights reserved.
  * Distributed under the Terms of Use in
  * http://www.unicode.org/copyright.html.
  *
@@ -72,23 +72,69 @@ import sun.util.resources.OpenListResourceBundle;
 public class JavaTimeSupplementary_mt extends OpenListResourceBundle {
     @Override
     protected final Object[][] getContents() {
+        final String[] sharedQuarterAbbreviations = {
+            "K1",
+            "K2",
+            "K3",
+            "K4",
+        };
+
+        final String[] sharedQuarterNames = {
+            "1el kwart",
+            "2ni kwart",
+            "3et kwart",
+            "4ba\u2019 kwart",
+        };
+
+        final String[] sharedDatePatterns = {
+            "EEEE, d 'ta'\u2019 MMMM y GGGG",
+            "d 'ta'\u2019 MMMM y GGGG",
+            "dd MMM y GGGG",
+            "dd/MM/y G",
+        };
+
+        final String[] sharedDayAbbreviations = {
+            "\u0126ad",
+            "Tne",
+            "Tli",
+            "Erb",
+            "\u0126am",
+            "\u0120im",
+            "Sib",
+        };
+
+        final String[] sharedDayNames = {
+            "Il-\u0126add",
+            "It-Tnejn",
+            "It-Tlieta",
+            "L-Erbg\u0127a",
+            "Il-\u0126amis",
+            "Il-\u0120img\u0127a",
+            "Is-Sibt",
+        };
+
+        final String[] sharedDayNarrows = {
+            "\u0126",
+            "T",
+            "T",
+            "E",
+            "\u0126",
+            "\u0120",
+            "S",
+        };
+
+        final String[] sharedJavaTimeDatePatterns = {
+            "EEEE, d 'ta'\u2019 MMMM y G",
+            "d 'ta'\u2019 MMMM y G",
+            "dd MMM y G",
+            "dd/MM/y GGGGG",
+        };
+
         return new Object[][] {
             { "QuarterAbbreviations",
-                new String[] {
-                    "K1",
-                    "K2",
-                    "K3",
-                    "K4",
-                }
-            },
+                sharedQuarterAbbreviations },
             { "QuarterNames",
-                new String[] {
-                    "1el kwart",
-                    "2ni kwart",
-                    "3et kwart",
-                    "4ba\u2019 kwart",
-                }
-            },
+                sharedQuarterNames },
             { "calendarname.buddhist",
                 "Kalendarju Buddist" },
             { "calendarname.gregorian",
@@ -119,95 +165,30 @@ public class JavaTimeSupplementary_mt extends OpenListResourceBundle {
                 "Sena" },
             { "field.zone",
                 "\u017bona" },
+            { "islamic.AmPmMarkers",
+                new String[] {
+                    "AM",
+                    "PM",
+                }
+            },
             { "islamic.DatePatterns",
-                new String[] {
-                    "EEEE, d 'ta'\u2019 MMMM y GGGG",
-                    "d 'ta'\u2019 MMMM y GGGG",
-                    "dd MMM y GGGG",
-                    "dd/MM/y G",
-                }
-            },
+                sharedDatePatterns },
             { "islamic.DayAbbreviations",
-                new String[] {
-                    "\u0126ad",
-                    "Tne",
-                    "Tli",
-                    "Erb",
-                    "\u0126am",
-                    "\u0120im",
-                    "Sib",
-                }
-            },
+                sharedDayAbbreviations },
             { "islamic.DayNames",
-                new String[] {
-                    "Il-\u0126add",
-                    "It-Tnejn",
-                    "It-Tlieta",
-                    "L-Erbg\u0127a",
-                    "Il-\u0126amis",
-                    "Il-\u0120img\u0127a",
-                    "Is-Sibt",
-                }
-            },
+                sharedDayNames },
             { "islamic.DayNarrows",
-                new String[] {
-                    "\u0126",
-                    "T",
-                    "T",
-                    "E",
-                    "\u0126",
-                    "\u0120",
-                    "S",
-                }
-            },
+                sharedDayNarrows },
             { "islamic.QuarterAbbreviations",
-                new String[] {
-                    "K1",
-                    "K2",
-                    "K3",
-                    "K4",
-                }
-            },
+                sharedQuarterAbbreviations },
             { "islamic.QuarterNames",
-                new String[] {
-                    "1el kwart",
-                    "2ni kwart",
-                    "3et kwart",
-                    "4ba\u2019 kwart",
-                }
-            },
-            { "islamic.QuarterNarrows",
-                new String[] {
-                    "1",
-                    "2",
-                    "3",
-                    "4",
-                }
-            },
+                sharedQuarterNames },
             { "java.time.buddhist.DatePatterns",
-                new String[] {
-                    "EEEE, d 'ta'\u2019 MMMM y G",
-                    "d 'ta'\u2019 MMMM y G",
-                    "dd MMM y G",
-                    "dd/MM/y GGGGG",
-                }
-            },
+                sharedJavaTimeDatePatterns },
             { "java.time.islamic.DatePatterns",
-                new String[] {
-                    "EEEE, d 'ta'\u2019 MMMM y G",
-                    "d 'ta'\u2019 MMMM y G",
-                    "dd MMM y G",
-                    "dd/MM/y GGGGG",
-                }
-            },
+                sharedJavaTimeDatePatterns },
             { "java.time.japanese.DatePatterns",
-                new String[] {
-                    "EEEE, d 'ta'\u2019 MMMM y G",
-                    "d 'ta'\u2019 MMMM y G",
-                    "dd MMM y G",
-                    "dd/MM/y GGGGG",
-                }
-            },
+                sharedJavaTimeDatePatterns },
             { "java.time.long.Eras",
                 new String[] {
                     "Qabel Kristu",
@@ -215,13 +196,7 @@ public class JavaTimeSupplementary_mt extends OpenListResourceBundle {
                 }
             },
             { "java.time.roc.DatePatterns",
-                new String[] {
-                    "EEEE, d 'ta'\u2019 MMMM y G",
-                    "d 'ta'\u2019 MMMM y G",
-                    "dd MMM y G",
-                    "dd/MM/y GGGGG",
-                }
-            },
+                sharedJavaTimeDatePatterns },
             { "java.time.short.Eras",
                 new String[] {
                     "QK",
@@ -229,46 +204,13 @@ public class JavaTimeSupplementary_mt extends OpenListResourceBundle {
                 }
             },
             { "roc.DatePatterns",
-                new String[] {
-                    "EEEE, d 'ta'\u2019 MMMM y GGGG",
-                    "d 'ta'\u2019 MMMM y GGGG",
-                    "dd MMM y GGGG",
-                    "dd/MM/y G",
-                }
-            },
+                sharedDatePatterns },
             { "roc.DayAbbreviations",
-                new String[] {
-                    "\u0126ad",
-                    "Tne",
-                    "Tli",
-                    "Erb",
-                    "\u0126am",
-                    "\u0120im",
-                    "Sib",
-                }
-            },
+                sharedDayAbbreviations },
             { "roc.DayNames",
-                new String[] {
-                    "Il-\u0126add",
-                    "It-Tnejn",
-                    "It-Tlieta",
-                    "L-Erbg\u0127a",
-                    "Il-\u0126amis",
-                    "Il-\u0120img\u0127a",
-                    "Is-Sibt",
-                }
-            },
+                sharedDayNames },
             { "roc.DayNarrows",
-                new String[] {
-                    "\u0126",
-                    "T",
-                    "T",
-                    "E",
-                    "\u0126",
-                    "\u0120",
-                    "S",
-                }
-            },
+                sharedDayNarrows },
             { "roc.MonthAbbreviations",
                 new String[] {
                     "Jan",
@@ -321,21 +263,9 @@ public class JavaTimeSupplementary_mt extends OpenListResourceBundle {
                 }
             },
             { "roc.QuarterAbbreviations",
-                new String[] {
-                    "K1",
-                    "K2",
-                    "K3",
-                    "K4",
-                }
-            },
+                sharedQuarterAbbreviations },
             { "roc.QuarterNames",
-                new String[] {
-                    "1el kwart",
-                    "2ni kwart",
-                    "3et kwart",
-                    "4ba\u2019 kwart",
-                }
-            },
+                sharedQuarterNames },
         };
     }
 }

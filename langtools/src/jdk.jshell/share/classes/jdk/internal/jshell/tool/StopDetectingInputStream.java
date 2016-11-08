@@ -61,11 +61,14 @@ public final class StopDetectingInputStream extends InputStream {
                         //an external editor is running. At the same time, it needs to run while the
                         //user's code is running (so Ctrl-C is detected). Hence waiting here until
                         //there is a confirmed need for input.
-                        waitInputNeeded();
+                        StopDetectingInputStream.State currentState = waitInputNeeded();
+                        if (currentState == StopDetectingInputStream.State.CLOSED) {
+                            break;
+                        }
                         if ((read = input.read()) == (-1)) {
                             break;
                         }
-                        if (read == 3 && state == StopDetectingInputStream.State.BUFFER) {
+                        if (read == 3 && currentState == StopDetectingInputStream.State.BUFFER) {
                             stop.run();
                         } else {
                             write(read);
@@ -74,7 +77,7 @@ public final class StopDetectingInputStream extends InputStream {
                 } catch (IOException ex) {
                     errorHandler.accept(ex);
                 } finally {
-                    state = StopDetectingInputStream.State.CLOSED;
+                    shutdown();
                 }
             }
         };
@@ -107,6 +110,11 @@ public final class StopDetectingInputStream extends InputStream {
         }
     }
 
+    public synchronized void shutdown() {
+        state = State.CLOSED;
+        notifyAll();
+    }
+
     public synchronized void write(int b) {
         if (state != State.BUFFER) {
             state = State.WAIT;
@@ -130,11 +138,13 @@ public final class StopDetectingInputStream extends InputStream {
     }
 
     public synchronized void setState(State state) {
-        this.state = state;
-        notifyAll();
+        if (this.state != State.CLOSED) {
+            this.state = state;
+            notifyAll();
+        }
     }
 
-    private synchronized void waitInputNeeded() {
+    private synchronized State waitInputNeeded() {
         while (state == State.WAIT) {
             try {
                 wait();
@@ -142,6 +152,8 @@ public final class StopDetectingInputStream extends InputStream {
                 //ignore
             }
         }
+
+        return state;
     }
 
     public enum State {

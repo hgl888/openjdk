@@ -223,7 +223,7 @@ public class AudioFormat {
                        boolean bigEndian, Map<String, Object> properties) {
         this(encoding, sampleRate, sampleSizeInBits, channels,
              frameSize, frameRate, bigEndian);
-        this.properties = new HashMap<String, Object>(properties);
+        this.properties = new HashMap<>(properties);
     }
 
     /**
@@ -592,7 +592,7 @@ public class AudioFormat {
         /**
          * Encoding name.
          */
-        private String name;
+        private final String name;
 
         /**
          * Constructs a new encoding.
@@ -633,7 +633,7 @@ public class AudioFormat {
          * {@code String} is the same name that was passed to the constructor.
          * For the predefined encodings, the name is similar to the encoding's
          * variable (field) name. For example, {@code PCM_SIGNED.toString()}
-         * returns the name "pcm_signed".
+         * returns the name "PCM_SIGNED".
          *
          * @return the encoding name
          */

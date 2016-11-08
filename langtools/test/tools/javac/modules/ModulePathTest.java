@@ -23,13 +23,13 @@
 
 /*
  * @test
- * @summary tests for -modulepath
+ * @summary tests for --module-path
  * @library /tools/lib
  * @modules
  *      jdk.compiler/com.sun.tools.javac.api
  *      jdk.compiler/com.sun.tools.javac.main
  *      jdk.jdeps/com.sun.tools.javap
- *      jdk.jlink/jdk.tools.jmod
+ *      jdk.jlink
  * @build toolbox.ToolBox toolbox.JarTask toolbox.JavacTask toolbox.ModuleBuilder
  *      ModuleTestBase
  * @run main ModulePathTest
@@ -39,6 +39,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.spi.ToolProvider;
 
 import toolbox.JarTask;
 import toolbox.JavacTask;
@@ -62,13 +63,13 @@ public class ModulePathTest extends ModuleTestBase {
 
         String log = new JavacTask(tb, Task.Mode.CMDLINE)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", "doesNotExist")
+                        "--module-path", "doesNotExist")
                 .files(findJavaFiles(src))
                 .run(Task.Expect.FAIL)
                 .writeAll()
                 .getOutput(Task.OutputKind.DIRECT);
 
-        if (!log.contains("- compiler.err.illegal.argument.for.option: -modulepath, doesNotExist"))
+        if (!log.contains("- compiler.err.illegal.argument.for.option: --module-path, doesNotExist"))
             throw new Exception("expected output not found");
     }
 
@@ -80,13 +81,13 @@ public class ModulePathTest extends ModuleTestBase {
 
         String log = new JavacTask(tb, Task.Mode.CMDLINE)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", "dummy.txt")
+                        "--module-path", "dummy.txt")
                 .files(findJavaFiles(src))
                 .run(Task.Expect.FAIL)
                 .writeAll()
                 .getOutput(Task.OutputKind.DIRECT);
 
-        if (!log.contains("- compiler.err.illegal.argument.for.option: -modulepath, dummy.txt"))
+        if (!log.contains("- compiler.err.illegal.argument.for.option: --module-path, dummy.txt"))
             throw new Exception("expected output not found");
     }
 
@@ -98,13 +99,13 @@ public class ModulePathTest extends ModuleTestBase {
 
         String log = new JavacTask(tb, Task.Mode.CMDLINE)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", "dummy.jimage")
+                        "--module-path", "dummy.jimage")
                 .files(findJavaFiles(src))
                 .run(Task.Expect.FAIL)
                 .writeAll()
                 .getOutput(Task.OutputKind.DIRECT);
 
-        if (!log.contains("- compiler.err.illegal.argument.for.option: -modulepath, dummy.jimage"))
+        if (!log.contains("- compiler.err.illegal.argument.for.option: --module-path, dummy.jimage"))
             throw new Exception("expected output not found");
     }
 
@@ -132,7 +133,7 @@ public class ModulePathTest extends ModuleTestBase {
 
         new JavacTask(tb, Task.Mode.CMDLINE)
                 .outdir(classes)
-                .options("-modulepath", modClasses.toString())
+                .options("--module-path", modClasses.toString())
                 .files(findJavaFiles(src))
                 .run()
                 .writeAll();
@@ -153,7 +154,7 @@ public class ModulePathTest extends ModuleTestBase {
         String log = new JavacTask(tb, Task.Mode.CMDLINE)
                 .outdir(classes)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", modClasses.toString())
+                        "--module-path", modClasses.toString())
                 .files(findJavaFiles(src))
                 .run(Task.Expect.FAIL)
                 .writeAll()
@@ -190,7 +191,7 @@ public class ModulePathTest extends ModuleTestBase {
 
         new JavacTask(tb, Task.Mode.CMDLINE)
                 .outdir(classes)
-                .options("-modulepath", moduleJar.toString(), "-addmods", "m1")
+                .options("--module-path", moduleJar.toString(), "--add-modules", "m1")
                 .files(findJavaFiles(src))
                 .run()
                 .writeAll();
@@ -226,7 +227,7 @@ public class ModulePathTest extends ModuleTestBase {
 
         new JavacTask(tb, Task.Mode.CMDLINE)
                 .outdir(classes)
-                .options("-modulepath", moduleJar.toString())
+                .options("--module-path", moduleJar.toString())
                 .files(findJavaFiles(src))
                 .run()
                 .writeAll();
@@ -240,7 +241,7 @@ public class ModulePathTest extends ModuleTestBase {
 
         String log = new JavacTask(tb, Task.Mode.CMDLINE)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", "dummy.jar")
+                        "--module-path", "dummy.jar")
                 .files(findJavaFiles(src))
                 .run(Task.Expect.FAIL)
                 .writeAll()
@@ -277,7 +278,7 @@ public class ModulePathTest extends ModuleTestBase {
 
         new JavacTask(tb, Task.Mode.CMDLINE)
                 .outdir(classes)
-                .options("-modulepath", jmod.toString())
+                .options("--module-path", jmod.toString())
                 .files(findJavaFiles(src))
                 .run()
                 .writeAll();
@@ -291,7 +292,7 @@ public class ModulePathTest extends ModuleTestBase {
 
         String log = new JavacTask(tb, Task.Mode.CMDLINE)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", "dummy.jmod")
+                        "--module-path", "dummy.jmod")
                 .files(findJavaFiles(src))
                 .run(Task.Expect.FAIL)
                 .writeAll()
@@ -303,7 +304,7 @@ public class ModulePathTest extends ModuleTestBase {
 
     @Test
     public void relativePath(Path base) throws Exception {
-        final Path modules = base.resolve("modules");
+        Path modules = base.resolve("modules");
         new ModuleBuilder(tb, "m1").build(modules);
 
         Path src = base.resolve("src");
@@ -311,7 +312,7 @@ public class ModulePathTest extends ModuleTestBase {
 
         new JavacTask(tb, Task.Mode.CMDLINE)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", modules + "/./../modules")
+                        "--module-path", modules + "/./../modules")
                 .files(findJavaFiles(src))
                 .run()
                 .writeAll();
@@ -319,7 +320,7 @@ public class ModulePathTest extends ModuleTestBase {
 
     @Test
     public void duplicatePaths_1(Path base) throws Exception {
-        final Path modules = base.resolve("modules");
+        Path modules = base.resolve("modules");
         new ModuleBuilder(tb, "m1").build(modules);
 
         Path src = base.resolve("src");
@@ -327,7 +328,7 @@ public class ModulePathTest extends ModuleTestBase {
 
         new JavacTask(tb, Task.Mode.CMDLINE)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", modules + "/./../modules" + PATH_SEP + modules)
+                        "--module-path", modules + "/./../modules" + PATH_SEP + modules)
                 .files(findJavaFiles(src))
                 .run()
                 .writeAll();
@@ -335,7 +336,7 @@ public class ModulePathTest extends ModuleTestBase {
 
     @Test
     public void duplicatePaths_2(Path base) throws Exception {
-        final Path modules = base.resolve("modules");
+        Path modules = base.resolve("modules");
         new ModuleBuilder(tb, "m1").build(modules);
 
         Path src = base.resolve("src");
@@ -343,8 +344,8 @@ public class ModulePathTest extends ModuleTestBase {
 
         new JavacTask(tb, Task.Mode.CMDLINE)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", modules.toString(),
-                        "-modulepath", modules.toString())
+                        "--module-path", modules.toString(),
+                        "--module-path", modules.toString())
                 .files(findJavaFiles(src))
                 .run()
                 .writeAll();
@@ -352,24 +353,25 @@ public class ModulePathTest extends ModuleTestBase {
 
     @Test
     public void oneModuleHidesAnother(Path base) throws Exception {
-        final Path module = base.resolve("modules");
+        Path modules = base.resolve("modules");
         new ModuleBuilder(tb, "m1")
                 .exports("pkg1")
                 .classes("package pkg1; public class E { }")
-                .build(module);
+                .build(modules);
 
-        final Path deepModuleDir = module.resolve("deepModuleDir");
+        Path deepModuleDirSrc = base.resolve("deepModuleDirSrc");
+        Path deepModuleDir = modules.resolve("deepModuleDir");
         new ModuleBuilder(tb, "m1")
                 .exports("pkg2")
                 .classes("package pkg2; public class E { }")
-                .build(deepModuleDir);
+                .build(deepModuleDirSrc, deepModuleDir);
 
         Path src = base.resolve("src");
         tb.writeJavaFiles(src, "module m2 { requires m1; }", " package p; class A { void main() { pkg2.E.class.getName(); } }");
 
         new JavacTask(tb, Task.Mode.CMDLINE)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", deepModuleDir + PATH_SEP + module)
+                        "--module-path", deepModuleDir + PATH_SEP + modules)
                 .files(findJavaFiles(src))
                 .run()
                 .writeAll();
@@ -377,7 +379,7 @@ public class ModulePathTest extends ModuleTestBase {
 
     @Test
     public void modulesInDifferentContainers(Path base) throws Exception {
-        final Path modules = base.resolve("modules");
+        Path modules = base.resolve("modules");
         new ModuleBuilder(tb, "m1")
                 .exports("one")
                 .classes("package one; public class A { }")
@@ -399,7 +401,7 @@ public class ModulePathTest extends ModuleTestBase {
 
         new JavacTask(tb, Task.Mode.CMDLINE)
                 .options("-XDrawDiagnostics",
-                        "-modulepath", modules.toString())
+                        "--module-path", modules.toString())
                 .files(findJavaFiles(src))
                 .run()
                 .writeAll();
@@ -419,6 +421,9 @@ public class ModulePathTest extends ModuleTestBase {
                 "--class-path", dir.toString(),
                 jmod.toString()
         };
-        jdk.tools.jmod.Main.run(args, System.out);
+        ToolProvider jmodTool = ToolProvider.findFirst("jmod").orElseThrow(() ->
+                new RuntimeException("jmod tool not found")
+        );
+        jmodTool.run(System.out, System.err, args);
     }
 }

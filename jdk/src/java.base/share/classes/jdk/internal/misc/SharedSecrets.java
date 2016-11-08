@@ -29,6 +29,7 @@ import java.lang.module.ModuleDescriptor;
 import java.util.jar.JarFile;
 import java.io.Console;
 import java.io.FileDescriptor;
+import java.io.FilePermission;
 import java.io.ObjectInputStream;
 import java.io.RandomAccessFile;
 import java.security.ProtectionDomain;
@@ -52,11 +53,14 @@ public class SharedSecrets {
     private static JavaLangInvokeAccess javaLangInvokeAccess;
     private static JavaLangRefAccess javaLangRefAccess;
     private static JavaIOAccess javaIOAccess;
-    private static JavaNetAccess javaNetAccess;
     private static JavaNetInetAddressAccess javaNetInetAddressAccess;
     private static JavaNetHttpCookieAccess javaNetHttpCookieAccess;
+    private static JavaNetSocketAccess javaNetSocketAccess;
+    private static JavaNetUriAccess javaNetUriAccess;
+    private static JavaNetURLClassLoaderAccess javaNetURLClassLoaderAccess;
     private static JavaNioAccess javaNioAccess;
     private static JavaIOFileDescriptorAccess javaIOFileDescriptorAccess;
+    private static JavaIOFilePermissionAccess javaIOFilePermissionAccess;
     private static JavaSecurityProtectionDomainAccess javaSecurityProtectionDomainAccess;
     private static JavaSecurityAccess javaSecurityAccess;
     private static JavaUtilZipFileAccess javaUtilZipFileAccess;
@@ -95,7 +99,7 @@ public class SharedSecrets {
     public static JavaLangInvokeAccess getJavaLangInvokeAccess() {
         if (javaLangInvokeAccess == null) {
             try {
-                Class<?> c = Class.forName("java.lang.invoke.MemberName");
+                Class<?> c = Class.forName("java.lang.invoke.MethodHandleImpl");
                 unsafe.ensureClassInitialized(c);
             } catch (ClassNotFoundException e) {};
         }
@@ -131,14 +135,24 @@ public class SharedSecrets {
         return javaLangRefAccess;
     }
 
-    public static void setJavaNetAccess(JavaNetAccess jna) {
-        javaNetAccess = jna;
+    public static void setJavaNetUriAccess(JavaNetUriAccess jnua) {
+        javaNetUriAccess = jnua;
     }
 
-    public static JavaNetAccess getJavaNetAccess() {
-        if (javaNetAccess == null)
+    public static JavaNetUriAccess getJavaNetUriAccess() {
+        if (javaNetUriAccess == null)
+            unsafe.ensureClassInitialized(java.net.URI.class);
+        return javaNetUriAccess;
+    }
+
+    public static void setJavaNetURLClassLoaderAccess(JavaNetURLClassLoaderAccess jnua) {
+        javaNetURLClassLoaderAccess = jnua;
+    }
+
+    public static JavaNetURLClassLoaderAccess getJavaNetURLClassLoaderAccess() {
+        if (javaNetURLClassLoaderAccess == null)
             unsafe.ensureClassInitialized(java.net.URLClassLoader.class);
-        return javaNetAccess;
+        return javaNetURLClassLoaderAccess;
     }
 
     public static void setJavaNetInetAddressAccess(JavaNetInetAddressAccess jna) {
@@ -159,6 +173,16 @@ public class SharedSecrets {
         if (javaNetHttpCookieAccess == null)
             unsafe.ensureClassInitialized(java.net.HttpCookie.class);
         return javaNetHttpCookieAccess;
+    }
+
+    public static void setJavaNetSocketAccess(JavaNetSocketAccess jnsa) {
+        javaNetSocketAccess = jnsa;
+    }
+
+    public static JavaNetSocketAccess getJavaNetSocketAccess() {
+        if (javaNetSocketAccess == null)
+            unsafe.ensureClassInitialized(java.net.ServerSocket.class);
+        return javaNetSocketAccess;
     }
 
     public static void setJavaNioAccess(JavaNioAccess jna) {
@@ -188,6 +212,17 @@ public class SharedSecrets {
 
     public static void setJavaIOFileDescriptorAccess(JavaIOFileDescriptorAccess jiofda) {
         javaIOFileDescriptorAccess = jiofda;
+    }
+
+    public static JavaIOFilePermissionAccess getJavaIOFilePermissionAccess() {
+        if (javaIOFilePermissionAccess == null)
+            unsafe.ensureClassInitialized(FilePermission.class);
+
+        return javaIOFilePermissionAccess;
+    }
+
+    public static void setJavaIOFilePermissionAccess(JavaIOFilePermissionAccess jiofpa) {
+        javaIOFilePermissionAccess = jiofpa;
     }
 
     public static JavaIOFileDescriptorAccess getJavaIOFileDescriptorAccess() {

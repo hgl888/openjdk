@@ -51,10 +51,11 @@ import jdk.internal.org.objectweb.asm.Opcodes;
 
 import static jdk.internal.org.objectweb.asm.Opcodes.*;
 import jdk.tools.jlink.plugin.PluginException;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.plugin.TransformerPlugin;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.Plugin;
 import jdk.tools.jlink.internal.plugins.SystemModuleDescriptorPlugin.Builder.*;
-import jdk.tools.jlink.plugin.ModuleEntry;
+import jdk.tools.jlink.plugin.ResourcePoolBuilder;
+import jdk.tools.jlink.plugin.ResourcePoolEntry;
 
 /**
  * Jlink plugin to reconstitute module descriptors for installed modules.
@@ -67,7 +68,7 @@ import jdk.tools.jlink.plugin.ModuleEntry;
  * @see java.lang.module.SystemModuleFinder
  * @see SystemModules
  */
-public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
+public final class SystemModuleDescriptorPlugin implements Plugin {
     private static final JavaLangModuleAccess JLMA = SharedSecrets.getJavaLangModuleAccess();
 
     // TODO: packager has the dependency on the plugin name
@@ -80,11 +81,6 @@ public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
 
     public SystemModuleDescriptorPlugin() {
         this.enabled = true;
-    }
-
-    @Override
-    public Set<Category> getType() {
-        return Collections.singleton(Category.TRANSFORMER);
     }
 
     @Override
@@ -112,7 +108,7 @@ public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
 
 
     @Override
-    public void visit(ModulePool in, ModulePool out) {
+    public ResourcePool transform(ResourcePool in, ResourcePoolBuilder out) {
         if (!enabled) {
             throw new PluginException(NAME + " was set");
         }
@@ -121,34 +117,30 @@ public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
 
         // generate the byte code to create ModuleDescriptors
         // skip parsing module-info.class and skip name check
-        in.modules().forEach(module -> {
-            Optional<ModuleEntry> optData = module.findEntry("module-info.class");
+        in.moduleView().modules().forEach(module -> {
+            Optional<ResourcePoolEntry> optData = module.findEntry("module-info.class");
             if (! optData.isPresent()) {
                 // automatic module not supported yet
                 throw new PluginException("module-info.class not found for " +
-                                          module.getName() + " module");
+                                          module.name() + " module");
             }
-            ModuleEntry data = optData.get();
-            assert module.getName().equals(data.getModule());
+            ResourcePoolEntry data = optData.get();
+            assert module.name().equals(data.moduleName());
             try {
-                ByteArrayInputStream bain = new ByteArrayInputStream(data.getBytes());
+                ByteArrayInputStream bain = new ByteArrayInputStream(data.contentBytes());
                 ModuleDescriptor md = ModuleDescriptor.read(bain);
                 validateNames(md);
 
-                ModuleDescriptorBuilder mbuilder = builder.module(md, module.getAllPackages());
+                ModuleDescriptorBuilder mbuilder = builder.module(md, module.packages());
                 int packages = md.exports().size() + md.conceals().size();
                 if (md.conceals().isEmpty() &&
-                        packages != module.getAllPackages().size()) {
+                        packages != module.packages().size()) {
                     // add ConcealedPackages attribute if not exist
                     bain.reset();
                     ModuleInfoRewriter minfoWriter =
                         new ModuleInfoRewriter(bain, mbuilder.conceals());
                     // replace with the overridden version
-                    data = ModuleEntry.create(data.getModule(),
-                                               data.getPath(),
-                                               data.getType(),
-                                               minfoWriter.stream(),
-                                               minfoWriter.size());
+                    data = data.copyWithContent(minfoWriter.getBytes());
                 }
                 out.add(data);
             } catch (IOException e) {
@@ -159,21 +151,18 @@ public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
         // Generate the new class
         ClassWriter cwriter = builder.build();
         in.entries().forEach(data -> {
-            if (data.getPath().endsWith("module-info.class"))
+            if (data.path().endsWith("module-info.class"))
                 return;
-            if (builder.isOverriddenClass(data.getPath())) {
+            if (builder.isOverriddenClass(data.path())) {
                 byte[] bytes = cwriter.toByteArray();
-                ModuleEntry ndata =
-                    ModuleEntry.create(data.getModule(),
-                                        data.getPath(),
-                                        data.getType(),
-                                        new ByteArrayInputStream(bytes),
-                                        bytes.length);
+                ResourcePoolEntry ndata = data.copyWithContent(bytes);
                 out.add(ndata);
             } else {
                 out.add(data);
             }
         });
+
+        return out.build();
     }
 
     /*
@@ -188,8 +177,8 @@ public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
             this.extender.write(this);
         }
 
-        InputStream stream() {
-            return new ByteArrayInputStream(buf);
+        byte[] getBytes() {
+            return buf;
         }
     }
 
@@ -448,29 +437,27 @@ public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
             }
 
             void newBuilder(String name, int reqs, int exports, int provides,
-                            int conceals, int packages) {
+                            int packages) {
                 mv.visitTypeInsn(NEW, MODULE_DESCRIPTOR_BUILDER);
                 mv.visitInsn(DUP);
                 mv.visitLdcInsn(name);
                 pushInt(initialCapacity(reqs));
                 pushInt(initialCapacity(exports));
                 pushInt(initialCapacity(provides));
-                pushInt(initialCapacity(conceals));
                 pushInt(initialCapacity(packages));
                 mv.visitMethodInsn(INVOKESPECIAL, MODULE_DESCRIPTOR_BUILDER,
-                                   "<init>", "(Ljava/lang/String;IIIII)V", false);
+                                   "<init>", "(Ljava/lang/String;IIII)V", false);
                 mv.visitVarInsn(ASTORE, BUILDER_VAR);
                 mv.visitVarInsn(ALOAD, BUILDER_VAR);
             }
 
             /*
              * Returns the set of concealed packages from ModuleDescriptor, if present
-             * or compute it if the module oes not have ConcealedPackages attribute
+             * or compute it if the module does not have ConcealedPackages attribute
              */
             Set<String> conceals() {
                 Set<String> conceals = md.conceals();
-                if (md.conceals().isEmpty() &&
-                        (md.exports().size() + md.conceals().size()) != packages.size()) {
+                if (conceals.isEmpty() && md.exports().size() != packages.size()) {
                     Set<String> exports = md.exports().stream()
                                             .map(Exports::source)
                                             .collect(Collectors.toSet());
@@ -492,8 +479,7 @@ public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
                 newBuilder(md.name(), md.requires().size(),
                            md.exports().size(),
                            md.provides().size(),
-                           conceals().size(),
-                           conceals().size() + md.exports().size());
+                           packages.size());
 
                 // requires
                 for (ModuleDescriptor.Requires req : md.requires()) {
@@ -528,10 +514,8 @@ public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
                     provides(p.service(), p.providers());
                 }
 
-                // concealed packages
-                for (String pn : conceals()) {
-                    conceals(pn);
-                }
+                // all packages
+                packages(packages);
 
                 // version
                 md.version().ifPresent(this::version);
@@ -675,11 +659,13 @@ public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
             /*
              * Invoke Builder.conceals(String pn)
              */
-            void conceals(String pn) {
+            void packages(Set<String> packages) {
                 mv.visitVarInsn(ALOAD, BUILDER_VAR);
-                mv.visitLdcInsn(pn);
+                int varIndex = new StringSetBuilder(packages).build();
+                assert varIndex == STRING_SET_VAR;
+                mv.visitVarInsn(ALOAD, varIndex);
                 mv.visitMethodInsn(INVOKEVIRTUAL, MODULE_DESCRIPTOR_BUILDER,
-                                   "conceals", STRING_SIG, false);
+                                   "packages", SET_SIG, false);
                 mv.visitInsn(POP);
             }
 
@@ -761,7 +747,7 @@ public final class SystemModuleDescriptorPlugin implements TransformerPlugin {
                 if (localVarIndex == 0) {
                     // if non-empty and more than one set reference this builder,
                     // emit to a unique local
-                    index = refCount == 1 ? STRING_SET_VAR
+                    index = refCount <= 1 ? STRING_SET_VAR
                                           : nextLocalVar++;
                     if (index < MAX_LOCAL_VARS) {
                         localVarIndex = index;

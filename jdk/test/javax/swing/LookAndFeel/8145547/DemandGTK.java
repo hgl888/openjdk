@@ -26,7 +26,8 @@
   @summary  Tests that GTK LaF is supported on solaris
             regardless of jdk.gtk.version flag values.
   @bug 8156121
-  @requires (os.name == "linux" | os.name == "solaris")
+  @key headful
+  @requires (os.family == "linux" | os.family == "solaris")
   @run main/othervm -Djdk.gtk.version=2 DemandGTK
   @run main/othervm -Djdk.gtk.version=3 DemandGTK
 */

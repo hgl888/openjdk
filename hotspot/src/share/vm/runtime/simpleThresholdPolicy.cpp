@@ -29,6 +29,9 @@
 #include "runtime/simpleThresholdPolicy.hpp"
 #include "runtime/simpleThresholdPolicy.inline.hpp"
 #include "code/scopeDesc.hpp"
+#if INCLUDE_JVMCI
+#include "jvmci/jvmciRuntime.hpp"
+#endif
 
 
 void SimpleThresholdPolicy::print_counters(const char* prefix, methodHandle mh) {
@@ -144,12 +147,18 @@ void SimpleThresholdPolicy::initialize() {
   // performed on 32-bit systems because it can lead to exhaustion
   // of the virtual memory address space available to the JVM.
   if (CICompilerCountPerCPU) {
-    count = MAX2(log2_intptr(os::active_processor_count()), 1) * 3 / 2;
+    count = MAX2(log2_intptr(os::active_processor_count()) * 3 / 2, 2);
+    FLAG_SET_ERGO(intx, CICompilerCount, count);
   }
 #endif
-  set_c1_count(MAX2(count / 3, 1));
-  set_c2_count(MAX2(count - c1_count(), 1));
-  FLAG_SET_ERGO(intx, CICompilerCount, c1_count() + c2_count());
+  if (TieredStopAtLevel < CompLevel_full_optimization) {
+    // No C2 compiler thread required
+    set_c1_count(count);
+  } else {
+    set_c1_count(MAX2(count / 3, 1));
+    set_c2_count(MAX2(count - c1_count(), 1));
+  }
+  assert(count == c1_count() + c2_count(), "inconsistent compiler thread count");
 }
 
 void SimpleThresholdPolicy::set_carry_if_necessary(InvocationCounter *counter) {
@@ -233,13 +242,6 @@ void SimpleThresholdPolicy::compile(const methodHandle& mh, int bci, CompLevel l
   if (level == CompLevel_none) {
     return;
   }
-
-#if INCLUDE_JVMCI
-  // We can't compile with a JVMCI compiler until the module system is initialized.
-  if (level == CompLevel_full_optimization && UseJVMCICompiler && !Universe::is_module_initialized()) {
-    return;
-  }
-#endif
 
   // Check if the method can be compiled. If it cannot be compiled with C1, continue profiling
   // in the interpreter and then compile with C2 (the transition function will request that,
@@ -354,7 +356,7 @@ CompLevel SimpleThresholdPolicy::common(Predicate p, Method* method, CompLevel c
 }
 
 // Determine if a method should be compiled with a normal entry point at a different level.
-CompLevel SimpleThresholdPolicy::call_event(Method* method,  CompLevel cur_level) {
+CompLevel SimpleThresholdPolicy::call_event(Method* method,  CompLevel cur_level, JavaThread* thread) {
   CompLevel osr_level = MIN2((CompLevel) method->highest_osr_comp_level(),
                              common(&SimpleThresholdPolicy::loop_predicate, method, cur_level));
   CompLevel next_level = common(&SimpleThresholdPolicy::call_predicate, method, cur_level);
@@ -371,12 +373,16 @@ CompLevel SimpleThresholdPolicy::call_event(Method* method,  CompLevel cur_level
   } else {
     next_level = MAX2(osr_level, next_level);
   }
-
+#if INCLUDE_JVMCI
+  if (UseJVMCICompiler) {
+    next_level = JVMCIRuntime::adjust_comp_level(method, false, next_level, thread);
+  }
+#endif
   return next_level;
 }
 
 // Determine if we should do an OSR compilation of a given method.
-CompLevel SimpleThresholdPolicy::loop_event(Method* method, CompLevel cur_level) {
+CompLevel SimpleThresholdPolicy::loop_event(Method* method, CompLevel cur_level, JavaThread* thread) {
   CompLevel next_level = common(&SimpleThresholdPolicy::loop_predicate, method, cur_level);
   if (cur_level == CompLevel_none) {
     // If there is a live OSR method that means that we deopted to the interpreter
@@ -386,6 +392,11 @@ CompLevel SimpleThresholdPolicy::loop_event(Method* method, CompLevel cur_level)
       return osr_level;
     }
   }
+#if INCLUDE_JVMCI
+  if (UseJVMCICompiler) {
+    next_level = JVMCIRuntime::adjust_comp_level(method, true, next_level, thread);
+  }
+#endif
   return next_level;
 }
 
@@ -394,7 +405,7 @@ CompLevel SimpleThresholdPolicy::loop_event(Method* method, CompLevel cur_level)
 void SimpleThresholdPolicy::method_invocation_event(const methodHandle& mh, const methodHandle& imh,
                                               CompLevel level, CompiledMethod* nm, JavaThread* thread) {
   if (is_compilation_enabled() && !CompileBroker::compilation_is_in_queue(mh)) {
-    CompLevel next_level = call_event(mh(), level);
+    CompLevel next_level = call_event(mh(), level, thread);
     if (next_level != level) {
       compile(mh, InvocationEntryBci, next_level, thread);
     }
@@ -410,8 +421,8 @@ void SimpleThresholdPolicy::method_back_branch_event(const methodHandle& mh, con
     // Use loop event as an opportunity to also check there's been
     // enough calls.
     CompLevel cur_level = comp_level(mh());
-    CompLevel next_level = call_event(mh(), cur_level);
-    CompLevel next_osr_level = loop_event(mh(), level);
+    CompLevel next_level = call_event(mh(), cur_level, thread);
+    CompLevel next_osr_level = loop_event(mh(), level, thread);
 
     next_level = MAX2(next_level,
                       next_osr_level < CompLevel_full_optimization ? next_osr_level : cur_level);

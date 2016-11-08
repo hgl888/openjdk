@@ -38,14 +38,15 @@
  * {@link jdk.jshell.Snippet}. For example, a statement is represented by an
  * instance of {@link jdk.jshell.StatementSnippet}, and a method declaration is
  * represented by an instance of {@link jdk.jshell.MethodSnippet}.
- * Snippets are created when {@link jdk.jshell.JShell#eval(java.lang.String)}
+ * Snippets are created when
+ * {@link jdk.jshell.JShell#eval(java.lang.String) JShell.eval(String)}
  * is invoked with an input which includes one or more snippets of code.
  * <p>
  * Any change to the compilation status of a snippet is reported with a
  * {@link jdk.jshell.SnippetEvent}.  There are three major kinds of
  * changes to the status of a snippet: it can created with <code>eval</code>,
  * it can be dropped from the active source state with
- * {@link jdk.jshell.JShell#drop(jdk.jshell.PersistentSnippet)}, and it can have
+ * {@link jdk.jshell.JShell#drop(jdk.jshell.Snippet)}, and it can have
  * its status updated as a result of a status change in another snippet.
  * For
  * example: given <code>js</code>, an instance of <code>JShell</code>, executing
@@ -84,7 +85,7 @@
  *                     if (input == null) {
  *                         break;
  *                     }
- *                     List&lt;SnippetEvent&gt; events = js.eval(input);
+ *                     List<SnippetEvent> events = js.eval(input);
  *                     for (SnippetEvent e : events) {
  *                         StringBuilder sb = new StringBuilder();
  *                         if (e.causeSnippet == null) {

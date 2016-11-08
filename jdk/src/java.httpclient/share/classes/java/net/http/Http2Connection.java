@@ -20,7 +20,9 @@
  *
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
+ * questions.
  */
+
 package java.net.http;
 
 import java.io.IOException;
@@ -298,7 +300,7 @@ class Http2Connection implements BufferHandler {
 
         ByteBuffer[] buffers = frame.getHeaderBlock();
         for (int i = 0; i < buffers.length; i++) {
-            hpackIn.decode(buffers[i], endOfHeaders, decoder);
+            hpackIn.decode(buffers[i], endOfHeaders && (i == buffers.length - 1), decoder);
         }
     }
 
@@ -367,7 +369,7 @@ class Http2Connection implements BufferHandler {
         Log.logError(t);
         closed = true;
         client2.deleteConnection(this);
-        Collection<Stream> c = streams.values();
+        List<Stream> c = new LinkedList<>(streams.values());
         for (Stream s : c) {
             s.cancelImpl(t);
         }

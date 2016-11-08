@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,14 +23,12 @@
 
 package jdk.test.lib.jittester.factories;
 
-import jdk.test.lib.Pair;
+import jdk.test.lib.util.Pair;
 import jdk.test.lib.jittester.OperatorKind;
 import jdk.test.lib.jittester.ProductionFailedException;
 import jdk.test.lib.jittester.Type;
 import jdk.test.lib.jittester.TypeList;
-import jdk.test.lib.jittester.types.TypeInt;
 import jdk.test.lib.jittester.types.TypeKlass;
-import jdk.test.lib.jittester.types.TypeLong;
 import jdk.test.lib.jittester.utils.PseudoRandom;
 import jdk.test.lib.jittester.utils.TypeUtil;
 
@@ -42,13 +40,13 @@ class BinaryShiftOperatorFactory extends BinaryOperatorFactory {
 
     @Override
     protected boolean isApplicable(Type resultType) {
-        return resultType.equals(new TypeInt()) || resultType.equals(new TypeLong());
+        return resultType.equals(TypeList.INT) || resultType.equals(TypeList.LONG);
     }
 
     @Override
-    protected Pair<Type, Type> generateTypes() throws ProductionFailedException {
-        Type leftType = resultType.equals(new TypeInt()) ? PseudoRandom.randomElement(TypeUtil.getImplicitlyCastable(TypeList.getBuiltInInt(), resultType)) : resultType;
-        Type rightType = PseudoRandom.randomElement(TypeUtil.getImplicitlyCastable(TypeList.getBuiltInInt(), new TypeLong()));
+    protected Pair<Type, Type> generateTypes() {
+        Type leftType = resultType.equals(TypeList.INT) ? PseudoRandom.randomElement(TypeUtil.getImplicitlyCastable(TypeList.getBuiltInInt(), resultType)) : resultType;
+        Type rightType = PseudoRandom.randomElement(TypeUtil.getImplicitlyCastable(TypeList.getBuiltInInt(), TypeList.LONG));
         return new Pair<>(leftType, rightType);
     }
 }

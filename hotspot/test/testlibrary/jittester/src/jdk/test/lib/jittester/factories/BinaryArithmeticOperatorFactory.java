@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,14 +23,13 @@
 
 package jdk.test.lib.jittester.factories;
 
-import jdk.test.lib.Pair;
+import jdk.test.lib.util.Pair;
 import jdk.test.lib.jittester.BuiltInType;
 import jdk.test.lib.jittester.OperatorKind;
 import jdk.test.lib.jittester.ProductionFailedException;
 import jdk.test.lib.jittester.Type;
 import jdk.test.lib.jittester.TypeList;
 import jdk.test.lib.jittester.utils.TypeUtil;
-import jdk.test.lib.jittester.types.TypeInt;
 import jdk.test.lib.jittester.types.TypeKlass;
 import jdk.test.lib.jittester.utils.PseudoRandom;
 
@@ -47,18 +46,18 @@ class BinaryArithmeticOperatorFactory extends BinaryOperatorFactory {
         // arithmetic for built-in types less capacious than "int" is not supported.
         if (TypeList.isBuiltIn(resultType)) {
             BuiltInType builtInType = (BuiltInType) resultType;
-            return builtInType.equals(new TypeInt()) || builtInType.isMoreCapaciousThan(new TypeInt());
+            return builtInType.equals(TypeList.INT) || builtInType.isMoreCapaciousThan(TypeList.INT);
         } else {
             return false;
         }
     }
 
     @Override
-    protected Pair<Type, Type> generateTypes() throws ProductionFailedException {
+    protected Pair<Type, Type> generateTypes() {
         Collection<Type> castableFromResultType = TypeUtil.getImplicitlyCastable(TypeList.getBuiltIn(), resultType);
         // built-in types less capacious than int are automatically casted to int in arithmetic.
         final Type leftType = PseudoRandom.randomElement(castableFromResultType);
-        final Type rightType = resultType.equals(new TypeInt()) ?
+        final Type rightType = resultType.equals(TypeList.INT) ?
                 PseudoRandom.randomElement(castableFromResultType) : resultType;
         //TODO: is there sense to swap them randomly as it was done in original code?
         return PseudoRandom.randomBoolean() ? new Pair<>(leftType, rightType) : new Pair<>(rightType, leftType);

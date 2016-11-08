@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2016, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2015, Red Hat Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -29,10 +29,10 @@
 #include "memory/resourceArea.hpp"
 #include "runtime/java.hpp"
 #include "runtime/stubCodeGenerator.hpp"
+#include "utilities/macros.hpp"
 #include "vm_version_aarch64.hpp"
-#ifdef TARGET_OS_FAMILY_linux
-# include "os_linux.inline.hpp"
-#endif
+
+#include OS_HEADER_INLINE(os)
 
 #ifndef BUILTIN_SIM
 #include <sys/auxv.h>
@@ -105,6 +105,9 @@ class VM_Version_StubGenerator: public StubCodeGenerator {
     __ get_dczid_el0(rscratch1);
     __ strw(rscratch1, Address(c_rarg0, in_bytes(VM_Version::dczid_el0_offset())));
 
+    __ get_ctr_el0(rscratch1);
+    __ strw(rscratch1, Address(c_rarg0, in_bytes(VM_Version::ctr_el0_offset())));
+
     __ leave();
     __ ret(lr);
 
@@ -124,16 +127,20 @@ void VM_Version::get_processor_features() {
 
   getPsrInfo_stub(&_psr_info);
 
+  int dcache_line = VM_Version::dcache_line_size();
+
   if (FLAG_IS_DEFAULT(AllocatePrefetchDistance))
-    FLAG_SET_DEFAULT(AllocatePrefetchDistance, 256);
+    FLAG_SET_DEFAULT(AllocatePrefetchDistance, 3*dcache_line);
   if (FLAG_IS_DEFAULT(AllocatePrefetchStepSize))
-    FLAG_SET_DEFAULT(AllocatePrefetchStepSize, 64);
-  FLAG_SET_DEFAULT(PrefetchScanIntervalInBytes, 256);
-  FLAG_SET_DEFAULT(PrefetchFieldsAhead, 256);
+    FLAG_SET_DEFAULT(AllocatePrefetchStepSize, dcache_line);
+  if (FLAG_IS_DEFAULT(PrefetchScanIntervalInBytes))
+    FLAG_SET_DEFAULT(PrefetchScanIntervalInBytes, 3*dcache_line);
   if (FLAG_IS_DEFAULT(PrefetchCopyIntervalInBytes))
-    FLAG_SET_DEFAULT(PrefetchCopyIntervalInBytes, 256);
-  if ((PrefetchCopyIntervalInBytes & 7) || (PrefetchCopyIntervalInBytes >= 32768)) {
-    warning("PrefetchCopyIntervalInBytes must be a multiple of 8 and < 32768");
+    FLAG_SET_DEFAULT(PrefetchCopyIntervalInBytes, 3*dcache_line);
+
+  if (PrefetchCopyIntervalInBytes != -1 &&
+       ((PrefetchCopyIntervalInBytes & 7) || (PrefetchCopyIntervalInBytes >= 32768))) {
+    warning("PrefetchCopyIntervalInBytes must be -1, or a multiple of 8 and < 32768");
     PrefetchCopyIntervalInBytes &= ~7;
     if (PrefetchCopyIntervalInBytes >= 32768)
       PrefetchCopyIntervalInBytes = 32760;
@@ -168,8 +175,17 @@ void VM_Version::get_processor_features() {
   }
 
   // Enable vendor specific features
-  if (_cpu == CPU_CAVIUM && _variant == 0) _features |= CPU_DMB_ATOMICS;
+  if (_cpu == CPU_CAVIUM) {
+    if (_variant == 0) _features |= CPU_DMB_ATOMICS;
+    if (FLAG_IS_DEFAULT(AvoidUnalignedAccesses)) {
+      FLAG_SET_DEFAULT(AvoidUnalignedAccesses, true);
+    }
+    if (FLAG_IS_DEFAULT(UseSIMDForMemoryOps)) {
+      FLAG_SET_DEFAULT(UseSIMDForMemoryOps, (_variant > 0));
+    }
+  }
   if (_cpu == CPU_ARM && (_model == 0xd03 || _model2 == 0xd03)) _features |= CPU_A53MAC;
+  if (_cpu == CPU_ARM && (_model == 0xd07 || _model2 == 0xd07)) _features |= CPU_STXR_PREFETCH;
   // If an olde style /proc/cpuinfo (cpu_lines == 1) then if _model is an A57 (0xd07)
   // we assume the worst and assume we could be on a big little system and have
   // undisclosed A53 cores which we could be swapped to at any stage
@@ -244,6 +260,11 @@ void VM_Version::get_processor_features() {
   } else if (UseCRC32CIntrinsics) {
     warning("CRC32C is not available on the CPU");
     FLAG_SET_DEFAULT(UseCRC32CIntrinsics, false);
+  }
+
+  if (UseFMA) {
+    warning("FMA instructions are not available on this CPU");
+    FLAG_SET_DEFAULT(UseFMA, false);
   }
 
   if (auxv & (HWCAP_SHA1 | HWCAP_SHA2)) {

@@ -290,6 +290,9 @@ class LDMLParseHandler extends AbstractLDMLHandler<Object> {
             case "narrow":
                 pushStringArrayEntry(qName, attributes, "narrow.AmPmMarkers/" + getContainerKey(), 2);
                 break;
+            case "abbreviated":
+                pushStringArrayEntry(qName, attributes, "abbreviated.AmPmMarkers/" + getContainerKey(), 2);
+                break;
             default:
                 pushIgnoredContainer(qName);
                 break;
@@ -414,6 +417,12 @@ class LDMLParseHandler extends AbstractLDMLHandler<Object> {
         case "timeZoneNames":
             pushContainer(qName, attributes);
             break;
+        case "hourFormat":
+            pushStringEntry(qName, attributes, "timezone.hourFormat");
+            break;
+        case "gmtFormat":
+            pushStringEntry(qName, attributes, "timezone.gmtFormat");
+            break;
         case "zone":
             {
                 String tzid = attributes.getValue("type"); // Olson tz id
@@ -456,6 +465,15 @@ class LDMLParseHandler extends AbstractLDMLHandler<Object> {
                 // for FormatData
                 // copy string for later assembly into NumberPatterns
                 pushStringEntry(qName, attributes, "NumberPatterns/decimal");
+            } else {
+                pushIgnoredContainer(qName);
+            }
+            break;
+        case "currencyFormatLength":
+            if (attributes.getValue("type") == null) {
+                // skipping type="short" data
+                // for FormatData
+                pushContainer(qName, attributes);
             } else {
                 pushIgnoredContainer(qName);
             }
@@ -750,7 +768,7 @@ class LDMLParseHandler extends AbstractLDMLHandler<Object> {
                 keyName = "narrow.AmPmMarkers/" + context;
                 break;
             case "abbreviated":
-                keyName = "";
+                keyName = "abbreviated.AmPmMarkers/" + context;
                 break;
             }
             break;

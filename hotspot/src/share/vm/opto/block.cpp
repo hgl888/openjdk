@@ -1212,6 +1212,9 @@ void PhaseCFG::verify() const {
       if (j >= 1 && n->is_Mach() && n->as_Mach()->ideal_Opcode() == Op_CreateEx) {
         assert(j == 1 || block->get_node(j-1)->is_Phi(), "CreateEx must be first instruction in block");
       }
+      if (n->needs_anti_dependence_check()) {
+        verify_anti_dependences(block, n);
+      }
       for (uint k = 0; k < n->req(); k++) {
         Node *def = n->in(k);
         if (def && def != n) {
@@ -1430,7 +1433,7 @@ void PhaseBlockLayout::find_edges() {
       if (n->num_preds() != 1) break;
 
       i++;
-      assert(n = _cfg.get_block(i), "expecting next block");
+      assert(n == _cfg.get_block(i), "expecting next block");
       tr->append(n);
       uf->map(n->_pre_order, tr->id());
       traces[n->_pre_order] = NULL;

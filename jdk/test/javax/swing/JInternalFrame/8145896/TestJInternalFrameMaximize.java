@@ -23,6 +23,7 @@
 
 /*
  * @test
+ * @key headful
  * @bug 8145896
  * @summary JInternalFrame setMaximum before adding to desktop throws null pointer exception
  * @library ../../regtesthelpers
@@ -65,6 +66,7 @@ public class TestJInternalFrameMaximize {
                 createUI();
                 robot.waitForIdle();
                 executeTest();
+                robot.delay(1000);
             }
         }
         if (!"".equals(errorMessage)) {

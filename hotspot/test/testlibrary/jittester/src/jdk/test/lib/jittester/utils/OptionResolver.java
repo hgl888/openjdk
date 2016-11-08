@@ -166,11 +166,10 @@ public class OptionResolver {
     }
 
     public abstract class Option<T> {
-
-        Character shortName;
-        String longName;
-        protected T defaultValue;
-        protected String description;
+        protected final Character shortName;
+        protected final String longName;
+        protected final T defaultValue;
+        protected final String description;
 
         public Option(Character shortName, String longName, T defaultValue, String description) {
             this.shortName = shortName;
@@ -200,6 +199,10 @@ public class OptionResolver {
             return (T) values.getOrDefault(this, defaultValue);
         }
 
+        public boolean isSet() {
+            return values.containsKey(this);
+        }
+
         public boolean isFlag() {
             return false;
         }
@@ -227,7 +230,7 @@ public class OptionResolver {
 
         @Override
         public Long parseFromString(String arg) {
-            return new Long(arg);
+            return Long.valueOf(arg);
         }
     }
 
@@ -239,7 +242,7 @@ public class OptionResolver {
 
         @Override
         public Integer parseFromString(String arg) {
-            return new Integer(arg);
+            return Integer.valueOf(arg);
         }
     }
 

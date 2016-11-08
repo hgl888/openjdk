@@ -24,23 +24,18 @@
  */
 package jdk.tools.jlink.internal.plugins;
 
-import java.io.IOException;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Predicate;
-import jdk.tools.jlink.plugin.PluginException;
-import jdk.tools.jlink.plugin.TransformerPlugin;
-import jdk.tools.jlink.plugin.ModuleEntry;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.internal.Utils;
+import jdk.tools.jlink.plugin.Plugin;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.ResourcePoolBuilder;
+import jdk.tools.jlink.plugin.ResourcePoolEntry;
 
 /**
  *
  * Exclude resources plugin
  */
-public final class ExcludePlugin implements TransformerPlugin {
+public final class ExcludePlugin implements Plugin {
 
     public static final String NAME = "exclude-resources";
     private Predicate<String> predicate;
@@ -51,13 +46,14 @@ public final class ExcludePlugin implements TransformerPlugin {
     }
 
     @Override
-    public void visit(ModulePool in, ModulePool out) {
+    public ResourcePool transform(ResourcePool in, ResourcePoolBuilder out) {
         in.transformAndCopy((resource) -> {
-            if (resource.getType().equals(ModuleEntry.Type.CLASS_OR_RESOURCE)) {
-                resource = predicate.test(resource.getPath()) ? resource : null;
+            if (resource.type().equals(ResourcePoolEntry.Type.CLASS_OR_RESOURCE)) {
+                resource = predicate.test(resource.path()) ? resource : null;
             }
             return resource;
         }, out);
+        return out.build();
     }
 
     @Override
@@ -76,19 +72,12 @@ public final class ExcludePlugin implements TransformerPlugin {
     }
 
     @Override
-    public Set<Category> getType() {
-        Set<Category> set = new HashSet<>();
-        set.add(Category.FILTER);
-        return Collections.unmodifiableSet(set);
+    public Category getType() {
+        return Category.FILTER;
     }
 
     @Override
     public void configure(Map<String, String> config) {
-        try {
-            String val = config.get(NAME);
-            predicate = new ResourceFilter(Utils.listParser.apply(val), true);
-        } catch (IOException ex) {
-            throw new PluginException(ex);
-        }
+        predicate = ResourceFilter.excludeFilter(config.get(NAME));
     }
 }

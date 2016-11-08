@@ -39,27 +39,18 @@ import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Date;
-import java.util.Formatter;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import jdk.internal.module.ConfigurableModuleFinder;
 import jdk.internal.module.ConfigurableModuleFinder.Phase;
 import jdk.tools.jlink.internal.TaskHelper.BadArgs;
 import static jdk.tools.jlink.internal.TaskHelper.JLINK_BUNDLE;
+import jdk.tools.jlink.internal.Jlink.JlinkConfiguration;
+import jdk.tools.jlink.internal.Jlink.PluginsConfiguration;
 import jdk.tools.jlink.internal.TaskHelper.Option;
 import jdk.tools.jlink.internal.TaskHelper.OptionsHelper;
 import jdk.tools.jlink.internal.ImagePluginStack.ImageProvider;
-import jdk.tools.jlink.plugin.ExecutableImage;
-import jdk.tools.jlink.Jlink.JlinkConfiguration;
-import jdk.tools.jlink.Jlink.PluginsConfiguration;
 import jdk.tools.jlink.plugin.PluginException;
 import jdk.tools.jlink.builder.DefaultImageBuilder;
 import jdk.tools.jlink.plugin.Plugin;
@@ -70,7 +61,7 @@ import jdk.tools.jlink.plugin.Plugin;
  * ## Should use jdk.joptsimple some day.
  */
 public class JlinkTask {
-    private static final boolean DEBUG = Boolean.getBoolean("jlink.debug");
+    static final boolean DEBUG = Boolean.getBoolean("jlink.debug");
 
     private static <T extends Throwable> void fail(Class<T> type,
             String format,
@@ -90,36 +81,41 @@ public class JlinkTask {
     private static final TaskHelper taskHelper
             = new TaskHelper(JLINK_BUNDLE);
 
-    static Option<?>[] recognizedOptions = {
+    private static final Option<?>[] recognizedOptions = {
         new Option<JlinkTask>(false, (task, opt, arg) -> {
             task.options.help = true;
-        }, "--help"),
+        }, "--help", "-h"),
         new Option<JlinkTask>(true, (task, opt, arg) -> {
+            // if used multiple times, the last one wins!
+            // So, clear previous values, if any.
+            task.options.modulePath.clear();
             String[] dirs = arg.split(File.pathSeparator);
-            task.options.modulePath = new Path[dirs.length];
             int i = 0;
-            for (String dir : dirs) {
-                task.options.modulePath[i++] = Paths.get(dir);
-            }
-        }, "--modulepath", "--mp"),
+            Arrays.stream(dirs)
+                  .map(Paths::get)
+                  .forEach(task.options.modulePath::add);
+        }, "--module-path", "-p"),
         new Option<JlinkTask>(true, (task, opt, arg) -> {
+            // if used multiple times, the last one wins!
+            // So, clear previous values, if any.
+            task.options.limitMods.clear();
             for (String mn : arg.split(",")) {
                 if (mn.isEmpty()) {
                     throw taskHelper.newBadArgs("err.mods.must.be.specified",
-                            "--limitmods");
+                            "--limit-modules");
                 }
                 task.options.limitMods.add(mn);
             }
-        }, "--limitmods"),
+        }, "--limit-modules"),
         new Option<JlinkTask>(true, (task, opt, arg) -> {
             for (String mn : arg.split(",")) {
                 if (mn.isEmpty()) {
                     throw taskHelper.newBadArgs("err.mods.must.be.specified",
-                            "--addmods");
+                            "--add-modules");
                 }
                 task.options.addMods.add(mn);
             }
-        }, "--addmods"),
+        }, "--add-modules"),
         new Option<JlinkTask>(true, (task, opt, arg) -> {
             Path path = Paths.get(arg);
             task.options.output = path;
@@ -145,10 +141,10 @@ public class JlinkTask {
         }, true, "--keep-packaged-modules"),
         new Option<JlinkTask>(true, (task, opt, arg) -> {
             task.options.saveoptsfile = arg;
-        }, "--saveopts"),
+        }, "--save-opts"),
         new Option<JlinkTask>(false, (task, opt, arg) -> {
             task.options.fullVersion = true;
-        }, true, "--fullversion"),};
+        }, true, "--full-version"),};
 
     private static final String PROGNAME = "jlink";
     private final OptionsValues options = new OptionsValues();
@@ -157,7 +153,7 @@ public class JlinkTask {
             = taskHelper.newOptionsHelper(JlinkTask.class, recognizedOptions);
     private PrintWriter log;
 
-    void setLog(PrintWriter out) {
+    void setLog(PrintWriter out, PrintWriter err) {
         log = out;
         taskHelper.setLog(log);
     }
@@ -176,7 +172,7 @@ public class JlinkTask {
         String  saveoptsfile;
         boolean version;
         boolean fullVersion;
-        Path[] modulePath;
+        List<Path> modulePath = new ArrayList<>();
         Set<String> limitMods = new HashSet<>();
         Set<String> addMods = new HashSet<>();
         Path output;
@@ -186,7 +182,8 @@ public class JlinkTask {
 
     int run(String[] args) {
         if (log == null) {
-            setLog(new PrintWriter(System.err));
+            setLog(new PrintWriter(System.out, true),
+                   new PrintWriter(System.err, true));
         }
         try {
             optionsHelper.handleOptions(this, args);
@@ -194,8 +191,8 @@ public class JlinkTask {
                 optionsHelper.showHelp(PROGNAME);
                 return EXIT_OK;
             }
-            if (optionsHelper.listPlugins()) {
-                optionsHelper.listPlugins(true);
+            if (optionsHelper.shouldListPlugins()) {
+                optionsHelper.listPlugins();
                 return EXIT_OK;
             }
             if (options.version || options.fullVersion) {
@@ -203,7 +200,7 @@ public class JlinkTask {
                 return EXIT_OK;
             }
             if (taskHelper.getExistingImage() == null) {
-                if (options.modulePath == null || options.modulePath.length == 0) {
+                if (options.modulePath == null || options.modulePath.isEmpty()) {
                     throw taskHelper.newBadArgs("err.modulepath.must.be.specified").showUsage(true);
                 }
                 createImage();
@@ -216,8 +213,8 @@ public class JlinkTask {
             }
 
             return EXIT_OK;
-        } catch (UncheckedIOException | PluginException | IllegalArgumentException |
-                 IOException | ResolutionException e) {
+        } catch (PluginException | IllegalArgumentException |
+                 UncheckedIOException |IOException | ResolutionException e) {
             log.println(taskHelper.getMessage("error.prefix") + " " + e.getMessage());
             if (DEBUG) {
                 e.printStackTrace(log);
@@ -245,7 +242,7 @@ public class JlinkTask {
      * Jlink API entry point.
      */
     public static void createImage(JlinkConfiguration config,
-            PluginsConfiguration plugins)
+                                   PluginsConfiguration plugins)
             throws Exception {
         Objects.requireNonNull(config);
         Objects.requireNonNull(config.getOutput());
@@ -254,10 +251,9 @@ public class JlinkTask {
         if (config.getModulepaths().isEmpty()) {
             throw new Exception("Empty module paths");
         }
-        Path[] arr = new Path[config.getModulepaths().size()];
-        arr = config.getModulepaths().toArray(arr);
+
         ModuleFinder finder
-                = newModuleFinder(arr, config.getLimitmods(), config.getModules());
+                = newModuleFinder(config.getModulepaths(), config.getLimitmods(), config.getModules());
 
         // First create the image provider
         ImageProvider imageProvider
@@ -306,7 +302,7 @@ public class JlinkTask {
         try {
             options.addMods = checkAddMods(options.addMods);
         } catch (IllegalArgumentException ex) {
-            throw taskHelper.newBadArgs("err.mods.must.be.specified", "--addmods")
+            throw taskHelper.newBadArgs("err.mods.must.be.specified", "--add-modules")
                     .showUsage(true);
         }
         // First create the image provider
@@ -332,10 +328,11 @@ public class JlinkTask {
         return addMods;
     }
 
-    private static ModuleFinder newModuleFinder(Path[] paths,
-            Set<String> limitMods,
-            Set<String> addMods) {
-        ModuleFinder finder = ModuleFinder.of(paths);
+    public static ModuleFinder newModuleFinder(List<Path> paths,
+                                               Set<String> limitMods,
+                                               Set<String> addMods)
+    {
+        ModuleFinder finder = ModuleFinder.of(paths.toArray(new Path[0]));
 
         // jmods are located at link-time
         if (finder instanceof ConfigurableModuleFinder) {

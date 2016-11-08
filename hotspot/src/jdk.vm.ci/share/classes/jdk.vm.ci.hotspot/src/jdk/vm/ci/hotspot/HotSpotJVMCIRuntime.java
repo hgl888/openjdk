@@ -22,39 +22,38 @@
  */
 package jdk.vm.ci.hotspot;
 
-import static jdk.vm.ci.inittimer.InitTimer.timer;
+import static jdk.vm.ci.common.InitTimer.timer;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
-import java.lang.reflect.Array;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.ServiceLoader;
 import java.util.TreeMap;
 
+import jdk.internal.misc.VM;
 import jdk.vm.ci.code.Architecture;
 import jdk.vm.ci.code.CompilationRequestResult;
 import jdk.vm.ci.code.CompiledCode;
 import jdk.vm.ci.code.InstalledCode;
+import jdk.vm.ci.common.InitTimer;
 import jdk.vm.ci.common.JVMCIError;
-import jdk.vm.ci.inittimer.InitTimer;
-import jdk.vm.ci.inittimer.SuppressFBWarnings;
-import jdk.vm.ci.meta.JVMCIMetaAccessContext;
+import jdk.vm.ci.hotspot.services.HotSpotJVMCICompilerFactory;
+import jdk.vm.ci.hotspot.services.HotSpotJVMCICompilerFactory.CompilationLevel;
+import jdk.vm.ci.hotspot.services.HotSpotVMEventListener;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.JavaType;
 import jdk.vm.ci.meta.ResolvedJavaType;
 import jdk.vm.ci.runtime.JVMCI;
 import jdk.vm.ci.runtime.JVMCIBackend;
 import jdk.vm.ci.runtime.JVMCICompiler;
+import jdk.vm.ci.runtime.services.JVMCICompilerFactory;
 import jdk.vm.ci.services.Services;
-import jdk.internal.misc.VM;
-
-//JaCoCo Exclude
 
 /**
  * HotSpot implementation of a JVMCI runtime.
@@ -66,7 +65,7 @@ import jdk.internal.misc.VM;
  * {@link #runtime()}. This allows the initialization to funnel back through
  * {@link JVMCI#initialize()} without deadlocking.
  */
-public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider, HotSpotProxified {
+public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider {
 
     @SuppressWarnings("try")
     static class DelayedInit {
@@ -92,14 +91,13 @@ public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider, H
      */
     public enum Option {
         Compiler(String.class, null, "Selects the system compiler."),
-        ImplicitStableValues(boolean.class, true, "Mark well-known stable fields as such."),
-        // Note: The following one is not used (see InitTimer.ENABLED).
+        // Note: The following one is not used (see InitTimer.ENABLED). It is added here
+        // so that -Djvmci.PrintFlags=true shows the option.
         InitTimer(boolean.class, false, "Specifies if initialization timing is enabled."),
-        PrintConfig(boolean.class, false, "Prints all HotSpotVMConfig fields."),
+        PrintConfig(boolean.class, false, "Prints VM configuration available via JVMCI and exits."),
         PrintFlags(boolean.class, false, "Prints all JVMCI flags and exits."),
         ShowFlags(boolean.class, false, "Prints all JVMCI flags and continues."),
-        TraceMethodDataFilter(String.class, null, ""),
-        TrustFinalDefaultFields(boolean.class, true, "Determines whether to treat final fields with default values as constant.");
+        TraceMethodDataFilter(String.class, null, "");
 
         /**
          * The prefix for system properties that are JVMCI options.
@@ -200,24 +198,54 @@ public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider, H
 
     protected final CompilerToVM compilerToVm;
 
+    protected final HotSpotVMConfigStore configStore;
     protected final HotSpotVMConfig config;
     private final JVMCIBackend hostBackend;
 
+    private final JVMCICompilerFactory compilerFactory;
+    private final HotSpotJVMCICompilerFactory hsCompilerFactory;
     private volatile JVMCICompiler compiler;
-    protected final JVMCIMetaAccessContext metaAccessContext;
+    protected final HotSpotJVMCIMetaAccessContext metaAccessContext;
+
+    /**
+     * Stores the result of {@link HotSpotJVMCICompilerFactory#getCompilationLevelAdjustment} so
+     * that it can be read from the VM.
+     */
+    @SuppressWarnings("unused") private final int compilationLevelAdjustment;
 
     private final Map<Class<? extends Architecture>, JVMCIBackend> backends = new HashMap<>();
 
-    private final Iterable<HotSpotVMEventListener> vmEventListeners;
+    private volatile List<HotSpotVMEventListener> vmEventListeners;
 
+    private Iterable<HotSpotVMEventListener> getVmEventListeners() {
+        if (vmEventListeners == null) {
+            synchronized (this) {
+                if (vmEventListeners == null) {
+                    List<HotSpotVMEventListener> listeners = new ArrayList<>();
+                    for (HotSpotVMEventListener vmEventListener : ServiceLoader.load(HotSpotVMEventListener.class)) {
+                        listeners.add(vmEventListener);
+                    }
+                    vmEventListeners = listeners;
+                }
+            }
+        }
+        return vmEventListeners;
+    }
+
+    /**
+     * Stores the result of {@link HotSpotJVMCICompilerFactory#getTrivialPrefixes()} so that it can
+     * be read from the VM.
+     */
     @SuppressWarnings("unused") private final String[] trivialPrefixes;
 
     @SuppressWarnings("try")
+    @SuppressFBWarnings(value = "DM_EXIT", justification = "PrintFlags is meant to exit the VM")
     private HotSpotJVMCIRuntime() {
         compilerToVm = new CompilerToVM();
 
         try (InitTimer t = timer("HotSpotVMConfig<init>")) {
-            config = new HotSpotVMConfig(compilerToVm);
+            configStore = new HotSpotVMConfigStore(compilerToVm);
+            config = new HotSpotVMConfig(configStore);
         }
 
         String hostArchitecture = config.getHostArchitectureName();
@@ -231,19 +259,7 @@ public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider, H
             hostBackend = registerBackend(factory.createJVMCIBackend(this, null));
         }
 
-        vmEventListeners = Services.load(HotSpotVMEventListener.class);
-
-        JVMCIMetaAccessContext context = null;
-        for (HotSpotVMEventListener vmEventListener : vmEventListeners) {
-            context = vmEventListener.createMetaAccessContext(this);
-            if (context != null) {
-                break;
-            }
-        }
-        if (context == null) {
-            context = new HotSpotJVMCIMetaAccessContext();
-        }
-        metaAccessContext = context;
+        metaAccessContext = new HotSpotJVMCIMetaAccessContext();
 
         boolean printFlags = Option.PrintFlags.getBoolean();
         boolean showFlags = Option.ShowFlags.getBoolean();
@@ -255,10 +271,33 @@ public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider, H
         }
 
         if (Option.PrintConfig.getBoolean()) {
-            printConfig(config, compilerToVm);
+            printConfig(configStore, compilerToVm);
+            System.exit(0);
         }
 
-        trivialPrefixes = HotSpotJVMCICompilerConfig.getCompilerFactory().getTrivialPrefixes();
+        compilerFactory = HotSpotJVMCICompilerConfig.getCompilerFactory();
+        if (compilerFactory instanceof HotSpotJVMCICompilerFactory) {
+            hsCompilerFactory = (HotSpotJVMCICompilerFactory) compilerFactory;
+            trivialPrefixes = hsCompilerFactory.getTrivialPrefixes();
+            switch (hsCompilerFactory.getCompilationLevelAdjustment()) {
+                case None:
+                    compilationLevelAdjustment = config.compLevelAdjustmentNone;
+                    break;
+                case ByHolder:
+                    compilationLevelAdjustment = config.compLevelAdjustmentByHolder;
+                    break;
+                case ByFullSignature:
+                    compilationLevelAdjustment = config.compLevelAdjustmentByFullSignature;
+                    break;
+                default:
+                    compilationLevelAdjustment = config.compLevelAdjustmentNone;
+                    break;
+            }
+        } else {
+            hsCompilerFactory = null;
+            trivialPrefixes = null;
+            compilationLevelAdjustment = config.compLevelAdjustmentNone;
+        }
     }
 
     private JVMCIBackend registerBackend(JVMCIBackend backend) {
@@ -272,6 +311,10 @@ public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider, H
         return metaAccessContext.fromClass(javaClass);
     }
 
+    public HotSpotVMConfigStore getConfigStore() {
+        return configStore;
+    }
+
     public HotSpotVMConfig getConfig() {
         return config;
     }
@@ -280,15 +323,11 @@ public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider, H
         return compilerToVm;
     }
 
-    public JVMCIMetaAccessContext getMetaAccessContext() {
-        return metaAccessContext;
-    }
-
     public JVMCICompiler getCompiler() {
         if (compiler == null) {
             synchronized (this) {
                 if (compiler == null) {
-                    compiler = HotSpotJVMCICompilerConfig.getCompilerFactory().createCompiler(this);
+                    compiler = compilerFactory.createCompiler(this);
                 }
             }
         }
@@ -331,10 +370,60 @@ public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider, H
      * Called from the VM.
      */
     @SuppressWarnings({"unused"})
-    private CompilationRequestResult compileMethod(HotSpotResolvedJavaMethod method, int entryBCI, long jvmciEnv, int id) {
+    private int adjustCompilationLevel(Class<?> declaringClass, String name, String signature, boolean isOsr, int level) {
+        CompilationLevel curLevel;
+        if (level == config.compilationLevelNone) {
+            curLevel = CompilationLevel.None;
+        } else if (level == config.compilationLevelSimple) {
+            curLevel = CompilationLevel.Simple;
+        } else if (level == config.compilationLevelLimitedProfile) {
+            curLevel = CompilationLevel.LimitedProfile;
+        } else if (level == config.compilationLevelFullProfile) {
+            curLevel = CompilationLevel.FullProfile;
+        } else if (level == config.compilationLevelFullOptimization) {
+            curLevel = CompilationLevel.FullOptimization;
+        } else {
+            throw JVMCIError.shouldNotReachHere();
+        }
+
+        switch (hsCompilerFactory.adjustCompilationLevel(declaringClass, name, signature, isOsr, curLevel)) {
+            case None:
+                return config.compilationLevelNone;
+            case Simple:
+                return config.compilationLevelSimple;
+            case LimitedProfile:
+                return config.compilationLevelLimitedProfile;
+            case FullProfile:
+                return config.compilationLevelFullProfile;
+            case FullOptimization:
+                return config.compilationLevelFullOptimization;
+            default:
+                return level;
+        }
+    }
+
+    /**
+     * Called from the VM.
+     */
+    @SuppressWarnings({"unused"})
+    private HotSpotCompilationRequestResult compileMethod(HotSpotResolvedJavaMethod method, int entryBCI, long jvmciEnv, int id) {
         CompilationRequestResult result = getCompiler().compileMethod(new HotSpotCompilationRequest(method, entryBCI, jvmciEnv, id));
         assert result != null : "compileMethod must always return something";
-        return result;
+        HotSpotCompilationRequestResult hsResult;
+        if (result instanceof HotSpotCompilationRequestResult) {
+            hsResult = (HotSpotCompilationRequestResult) result;
+        } else {
+            Object failure = result.getFailure();
+            if (failure != null) {
+                boolean retry = false; // Be conservative with unknown compiler
+                hsResult = HotSpotCompilationRequestResult.failure(failure.toString(), retry);
+            } else {
+                int inlinedBytecodes = -1;
+                hsResult = HotSpotCompilationRequestResult.success(inlinedBytecodes);
+            }
+        }
+
+        return hsResult;
     }
 
     /**
@@ -344,8 +433,20 @@ public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider, H
      */
     @SuppressWarnings({"unused"})
     private void shutdown() throws Exception {
-        for (HotSpotVMEventListener vmEventListener : vmEventListeners) {
+        for (HotSpotVMEventListener vmEventListener : getVmEventListeners()) {
             vmEventListener.notifyShutdown();
+        }
+    }
+
+    /**
+     * Notify on completion of a bootstrap.
+     *
+     * Called from the VM.
+     */
+    @SuppressWarnings({"unused"})
+    private void bootstrapFinished() throws Exception {
+        for (HotSpotVMEventListener vmEventListener : getVmEventListeners()) {
+            vmEventListener.notifyBootstrapFinished();
         }
     }
 
@@ -357,76 +458,48 @@ public final class HotSpotJVMCIRuntime implements HotSpotJVMCIRuntimeProvider, H
      * @param compiledCode
      */
     void notifyInstall(HotSpotCodeCacheProvider hotSpotCodeCacheProvider, InstalledCode installedCode, CompiledCode compiledCode) {
-        for (HotSpotVMEventListener vmEventListener : vmEventListeners) {
+        for (HotSpotVMEventListener vmEventListener : getVmEventListeners()) {
             vmEventListener.notifyInstall(hotSpotCodeCacheProvider, installedCode, compiledCode);
         }
     }
 
-    private static void printConfig(HotSpotVMConfig config, CompilerToVM vm) {
-        Field[] fields = config.getClass().getDeclaredFields();
-        Map<String, Field> sortedFields = new TreeMap<>();
-        for (Field f : fields) {
-            if (!f.isSynthetic() && !Modifier.isStatic(f.getModifiers())) {
-                f.setAccessible(true);
-                sortedFields.put(f.getName(), f);
-            }
-        }
-        for (Field f : sortedFields.values()) {
-            try {
-                String line = String.format("%9s %-40s = %s%n", f.getType().getSimpleName(), f.getName(), pretty(f.get(config)));
-                byte[] lineBytes = line.getBytes();
-                vm.writeDebugOutput(lineBytes, 0, lineBytes.length);
-                vm.flushDebugOutput();
-            } catch (Exception e) {
-            }
-        }
+    @SuppressFBWarnings(value = "DM_DEFAULT_ENCODING", justification = "no localization here please!")
+    private static void printConfigLine(CompilerToVM vm, String format, Object... args) {
+        String line = String.format(format, args);
+        byte[] lineBytes = line.getBytes();
+        vm.writeDebugOutput(lineBytes, 0, lineBytes.length);
+        vm.flushDebugOutput();
     }
 
-    private static String pretty(Object value) {
-        if (value == null) {
-            return "null";
+    private static void printConfig(HotSpotVMConfigStore store, CompilerToVM vm) {
+        TreeMap<String, VMField> fields = new TreeMap<>(store.getFields());
+        for (VMField field : fields.values()) {
+            if (!field.isStatic()) {
+                printConfigLine(vm, "[vmconfig:instance field] %s %s {offset=%d[0x%x]}%n", field.type, field.name, field.offset, field.offset);
+            } else {
+                String value = field.value == null ? "null" : String.format("%d[0x%x]", field.value, field.value);
+                printConfigLine(vm, "[vmconfig:static field] %s %s = %s {address=0x%x}%n", field.type, field.name, value, field.address);
+            }
         }
-
-        Class<?> klass = value.getClass();
-        if (value instanceof String) {
-            return "\"" + value + "\"";
-        } else if (value instanceof Method) {
-            return "method \"" + ((Method) value).getName() + "\"";
-        } else if (value instanceof Class<?>) {
-            return "class \"" + ((Class<?>) value).getSimpleName() + "\"";
-        } else if (value instanceof Integer) {
-            if ((Integer) value < 10) {
-                return value.toString();
-            }
-            return value + " (0x" + Integer.toHexString((Integer) value) + ")";
-        } else if (value instanceof Long) {
-            if ((Long) value < 10 && (Long) value > -10) {
-                return value + "l";
-            }
-            return value + "l (0x" + Long.toHexString((Long) value) + "l)";
-        } else if (klass.isArray()) {
-            StringBuilder str = new StringBuilder();
-            int dimensions = 0;
-            while (klass.isArray()) {
-                dimensions++;
-                klass = klass.getComponentType();
-            }
-            int length = Array.getLength(value);
-            str.append(klass.getSimpleName()).append('[').append(length).append(']');
-            for (int i = 1; i < dimensions; i++) {
-                str.append("[]");
-            }
-            str.append(" {");
-            for (int i = 0; i < length; i++) {
-                str.append(pretty(Array.get(value, i)));
-                if (i < length - 1) {
-                    str.append(", ");
-                }
-            }
-            str.append('}');
-            return str.toString();
+        TreeMap<String, VMFlag> flags = new TreeMap<>(store.getFlags());
+        for (VMFlag flag : flags.values()) {
+            printConfigLine(vm, "[vmconfig:flag] %s %s = %s%n", flag.type, flag.name, flag.value);
         }
-        return value.toString();
+        TreeMap<String, Long> addresses = new TreeMap<>(store.getAddresses());
+        for (Map.Entry<String, Long> e : addresses.entrySet()) {
+            printConfigLine(vm, "[vmconfig:address] %s = %d[0x%x]%n", e.getKey(), e.getValue(), e.getValue());
+        }
+        TreeMap<String, Long> constants = new TreeMap<>(store.getConstants());
+        for (Map.Entry<String, Long> e : constants.entrySet()) {
+            printConfigLine(vm, "[vmconfig:constant] %s = %d[0x%x]%n", e.getKey(), e.getValue(), e.getValue());
+        }
+        TreeMap<String, Long> typeSizes = new TreeMap<>(store.getTypeSizes());
+        for (Map.Entry<String, Long> e : typeSizes.entrySet()) {
+            printConfigLine(vm, "[vmconfig:type size] %s = %d%n", e.getKey(), e.getValue());
+        }
+        for (VMIntrinsicMethod e : store.getIntrinsics()) {
+            printConfigLine(vm, "[vmconfig:intrinsic] %d = %s.%s %s%n", e.id, e.declaringClass, e.name, e.descriptor);
+        }
     }
 
     public OutputStream getLogStream() {

@@ -23,17 +23,16 @@
 package jdk.vm.ci.meta;
 
 import java.lang.annotation.Annotation;
-import java.lang.invoke.MethodHandle;
+import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Array;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
 
 /**
  * Represents a resolved Java method. Methods, like fields and types, are resolved through
  * {@link ConstantPool constant pools}.
  */
-public interface ResolvedJavaMethod extends JavaMethod, InvokeTarget, ModifiersProvider {
+public interface ResolvedJavaMethod extends JavaMethod, InvokeTarget, ModifiersProvider, AnnotatedElement {
 
     /**
      * Returns the bytecode of this method, if the method has code. The returned byte array does not
@@ -72,14 +71,6 @@ public interface ResolvedJavaMethod extends JavaMethod, InvokeTarget, ModifiersP
      */
     int getMaxStackSize();
 
-    /**
-     * {@inheritDoc}
-     * <p>
-     * Only the {@linkplain Modifier#methodModifiers() method flags} specified in the JVM
-     * specification will be included in the returned mask.
-     */
-    int getModifiers();
-
     default boolean isFinal() {
         return ModifiersProvider.super.isFinalFlagSet();
     }
@@ -88,31 +79,25 @@ public interface ResolvedJavaMethod extends JavaMethod, InvokeTarget, ModifiersP
      * Determines if this method is a synthetic method as defined by the Java Language
      * Specification.
      */
-    default boolean isSynthetic() {
-        return (SYNTHETIC & getModifiers()) == SYNTHETIC;
-    }
+    boolean isSynthetic();
 
     /**
-     * Checks that the method is a <a
-     * href="http://docs.oracle.com/javase/specs/jvms/se8/html/jvms-4.html#jvms-4.6">varargs</a>
+     * Checks that the method is a
+     * <a href="http://docs.oracle.com/javase/specs/jvms/se8/html/jvms-4.html#jvms-4.6">varargs</a>
      * method.
      *
      * @return whether the method is a varargs method
      */
-    default boolean isVarArgs() {
-        return (VARARGS & getModifiers()) == VARARGS;
-    }
+    boolean isVarArgs();
 
     /**
-     * Checks that the method is a <a
-     * href="http://docs.oracle.com/javase/specs/jvms/se8/html/jvms-4.html#jvms-4.6">bridge</a>
+     * Checks that the method is a
+     * <a href="http://docs.oracle.com/javase/specs/jvms/se8/html/jvms-4.html#jvms-4.6">bridge</a>
      * method.
      *
      * @return whether the method is a bridge method
      */
-    default boolean isBridge() {
-        return (BRIDGE & getModifiers()) == BRIDGE;
-    }
+    boolean isBridge();
 
     /**
      * Returns {@code true} if this method is a default method; returns {@code false} otherwise.
@@ -189,22 +174,6 @@ public interface ResolvedJavaMethod extends JavaMethod, InvokeTarget, ModifiersP
     ConstantPool getConstantPool();
 
     /**
-     * Returns all annotations of this method. If no annotations are present, an array of length 0
-     * is returned.
-     */
-    Annotation[] getAnnotations();
-
-    /**
-     * Returns the annotation for the specified type of this method, if such an annotation is
-     * present.
-     *
-     * @param annotationClass the Class object corresponding to the annotation type
-     * @return this element's annotation for the specified annotation type if present on this
-     *         method, else {@code null}
-     */
-    <T extends Annotation> T getAnnotation(Class<T> annotationClass);
-
-    /**
      * Returns an array of arrays that represent the annotations on the formal parameters, in
      * declaration order, of this method.
      *
@@ -242,18 +211,6 @@ public interface ResolvedJavaMethod extends JavaMethod, InvokeTarget, ModifiersP
      * variable table.
      */
     LocalVariableTable getLocalVariableTable();
-
-    /**
-     * Invokes the underlying method represented by this object, on the specified object with the
-     * specified parameters. This method is similar to a reflective method invocation by
-     * {@link Method#invoke}.
-     *
-     * @param receiver The receiver for the invocation, or {@code null} if it is a static method.
-     * @param arguments The arguments for the invocation.
-     * @return The value returned by the method invocation, or {@code null} if the return type is
-     *         {@code void}.
-     */
-    JavaConstant invoke(JavaConstant receiver, JavaConstant[] arguments);
 
     /**
      * Gets the encoding of (that is, a constant representing the value of) this method.
@@ -345,22 +302,4 @@ public interface ResolvedJavaMethod extends JavaMethod, InvokeTarget, ModifiersP
     }
 
     SpeculationLog getSpeculationLog();
-
-    /**
-     * Determines if the method identified by its holder and name is a <a
-     * href="https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.9">signature
-     * polymorphic</a> method.
-     */
-    static boolean isSignaturePolymorphic(JavaType holder, String name, MetaAccessProvider metaAccess) {
-        if (!holder.getName().equals("Ljava/lang/invoke/MethodHandle;")) {
-            return false;
-        }
-        ResolvedJavaType methodHandleType = metaAccess.lookupJavaType(MethodHandle.class);
-        Signature signature = metaAccess.parseMethodDescriptor("([Ljava/lang/Object;)Ljava/lang/Object;");
-        ResolvedJavaMethod method = methodHandleType.findMethod(name, signature);
-        if (method == null) {
-            return false;
-        }
-        return method.isNative() && method.isVarArgs();
-    }
 }

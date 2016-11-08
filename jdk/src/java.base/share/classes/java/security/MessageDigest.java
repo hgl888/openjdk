@@ -32,10 +32,13 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.io.InputStream;
 import java.io.ByteArrayInputStream;
-
+import java.security.InvalidKeyException;
 import java.nio.ByteBuffer;
 
 import sun.security.util.Debug;
+import sun.security.util.MessageDigestSpi2;
+
+import javax.crypto.SecretKey;
 
 /**
  * This MessageDigest class provides applications the functionality of a
@@ -439,7 +442,12 @@ public abstract class MessageDigest extends MessageDigestSpi {
     }
 
     /**
-     * Compares two digests for equality. Does a simple byte compare.
+     * Compares two digests for equality. Two digests are equal if they have
+     * the same length and all bytes at corresponding positions are equal.
+     *
+     * @implNote
+     * If the digests are the same length, all bytes are examined to
+     * determine equality.
      *
      * @param digesta one of the digests to compare.
      *
@@ -543,7 +551,7 @@ public abstract class MessageDigest extends MessageDigestSpi {
      * and its original parent (Object).
      */
 
-    static class Delegate extends MessageDigest {
+    static class Delegate extends MessageDigest implements MessageDigestSpi2 {
 
         // The provider implementation (delegate)
         private MessageDigestSpi digestSpi;
@@ -596,6 +604,14 @@ public abstract class MessageDigest extends MessageDigestSpi {
             digestSpi.engineUpdate(input);
         }
 
+        public void engineUpdate(SecretKey key) throws InvalidKeyException {
+            if (digestSpi instanceof MessageDigestSpi2) {
+                ((MessageDigestSpi2)digestSpi).engineUpdate(key);
+            } else {
+                throw new UnsupportedOperationException
+                ("Digest does not support update of SecretKey object");
+            }
+        }
         protected byte[] engineDigest() {
             return digestSpi.engineDigest();
         }

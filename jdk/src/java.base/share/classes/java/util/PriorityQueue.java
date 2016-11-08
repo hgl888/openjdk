@@ -337,11 +337,8 @@ public class PriorityQueue<E> extends AbstractQueue<E>
         int i = size;
         if (i >= queue.length)
             grow(i + 1);
+        siftUp(i, e);
         size = i + 1;
-        if (i == 0)
-            queue[0] = e;
-        else
-            siftUp(i, e);
         return true;
     }
 
@@ -752,11 +749,11 @@ public class PriorityQueue<E> extends AbstractQueue<E>
     /**
      * Saves this queue to a stream (that is, serializes it).
      *
+     * @param s the stream
+     * @throws java.io.IOException if an I/O error occurs
      * @serialData The length of the array backing the instance is
      *             emitted (int), followed by all of its elements
      *             (each an {@code Object}) in the proper order.
-     * @param s the stream
-     * @throws java.io.IOException if an I/O error occurs
      */
     private void writeObject(java.io.ObjectOutputStream s)
         throws java.io.IOException {

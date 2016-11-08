@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -131,26 +131,53 @@ class CallInfo : public StackObj {
 //   resolved_klass = specified class (i.e., static receiver class)
 //   current_klass  = sending method holder (i.e., class containing the method
 //                    containing the call being resolved)
+//   current_method = sending method (relevant for field resolution)
 class LinkInfo : public StackObj {
   Symbol*     _name;            // extracted from JVM_CONSTANT_NameAndType
   Symbol*     _signature;
   KlassHandle _resolved_klass;  // class that the constant pool entry points to
   KlassHandle _current_klass;   // class that owns the constant pool
+  methodHandle _current_method;  // sending method
   bool        _check_access;
+  constantTag _tag;
+
  public:
+  enum AccessCheck {
+    needs_access_check,
+    skip_access_check
+  };
+
+  LinkInfo(const constantPoolHandle& pool, int index, methodHandle current_method, TRAPS);
   LinkInfo(const constantPoolHandle& pool, int index, TRAPS);
+
   // Condensed information from other call sites within the vm.
-  LinkInfo(KlassHandle resolved_klass, Symbol* name, Symbol* signature,
-           KlassHandle current_klass, bool check_access = true) :
+  LinkInfo(KlassHandle resolved_klass, Symbol* name, Symbol* signature, KlassHandle current_klass,
+           AccessCheck check_access = needs_access_check,
+           constantTag tag = JVM_CONSTANT_Invalid) :
     _resolved_klass(resolved_klass),
-    _name(name), _signature(signature), _current_klass(current_klass),
-    _check_access(check_access) {}
+    _name(name), _signature(signature), _current_klass(current_klass), _current_method(NULL),
+    _check_access(check_access == needs_access_check), _tag(tag) {}
+
+  LinkInfo(KlassHandle resolved_klass, Symbol* name, Symbol* signature, methodHandle current_method,
+           AccessCheck check_access = needs_access_check,
+           constantTag tag = JVM_CONSTANT_Invalid) :
+    _resolved_klass(resolved_klass),
+    _name(name), _signature(signature), _current_klass(current_method->method_holder()), _current_method(current_method),
+    _check_access(check_access == needs_access_check), _tag(tag) {}
+
+  // Case where we just find the method and don't check access against the current class
+  LinkInfo(KlassHandle resolved_klass, Symbol*name, Symbol* signature) :
+    _resolved_klass(resolved_klass),
+    _name(name), _signature(signature), _current_klass(NULL), _current_method(NULL),
+    _check_access(false), _tag(JVM_CONSTANT_Invalid) {}
 
   // accessors
   Symbol* name() const               { return _name; }
   Symbol* signature() const          { return _signature; }
   KlassHandle resolved_klass() const { return _resolved_klass; }
   KlassHandle current_klass() const  { return _current_klass; }
+  methodHandle current_method() const { return _current_method; }
+  constantTag tag() const            { return _tag; }
   bool check_access() const          { return _check_access; }
   char* method_string() const;
 
@@ -192,7 +219,7 @@ class LinkResolver: AllStatic {
                                              KlassHandle sel_klass, TRAPS);
 
   static methodHandle resolve_interface_method(const LinkInfo& link_info, Bytecodes::Code code, TRAPS);
-  static methodHandle resolve_method          (const LinkInfo& link_info, bool require_methodref, TRAPS);
+  static methodHandle resolve_method          (const LinkInfo& link_info, Bytecodes::Code code, TRAPS);
 
   static methodHandle linktime_resolve_static_method    (const LinkInfo& link_info, TRAPS);
   static methodHandle linktime_resolve_special_method   (const LinkInfo& link_info, TRAPS);
@@ -251,7 +278,9 @@ class LinkResolver: AllStatic {
 
   static void resolve_field_access(fieldDescriptor& result,
                                    const constantPoolHandle& pool,
-                                   int index, Bytecodes::Code byte, TRAPS);
+                                   int index,
+                                   const methodHandle& method,
+                                   Bytecodes::Code byte, TRAPS);
   static void resolve_field(fieldDescriptor& result, const LinkInfo& link_info,
                             Bytecodes::Code access_kind,
                             bool initialize_class, TRAPS);

@@ -28,11 +28,10 @@ import static jdk.vm.ci.hotspot.HotSpotResolvedObjectTypeImpl.fromObjectClass;
 import static jdk.vm.ci.hotspot.UnsafeAccess.UNSAFE;
 
 import java.lang.reflect.Array;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.Objects;
 
 import jdk.vm.ci.code.CodeUtil;
 import jdk.vm.ci.code.TargetDescription;
@@ -52,7 +51,7 @@ import jdk.vm.ci.meta.Signature;
 /**
  * HotSpot implementation of {@link MetaAccessProvider}.
  */
-public class HotSpotMetaAccessProvider implements MetaAccessProvider, HotSpotProxified {
+public class HotSpotMetaAccessProvider implements MetaAccessProvider {
 
     protected final HotSpotJVMCIRuntimeProvider runtime;
 
@@ -78,44 +77,8 @@ public class HotSpotMetaAccessProvider implements MetaAccessProvider, HotSpotPro
         return new HotSpotSignature(runtime, signature);
     }
 
-    public HotSpotSymbol lookupSymbol(String symbol) {
-        long pointer = runtime.getCompilerToVM().lookupSymbol(symbol);
-        if (pointer == 0) {
-            return null;
-        } else {
-            return new HotSpotSymbol(symbol, pointer);
-        }
-    }
-
-    /**
-     * {@link Field} object of {@link Method#slot}.
-     */
-    private Field reflectionMethodSlot = getReflectionSlotField(Method.class);
-
-    /**
-     * {@link Field} object of {@link Constructor#slot}.
-     */
-    private Field reflectionConstructorSlot = getReflectionSlotField(Constructor.class);
-
-    private static Field getReflectionSlotField(Class<?> reflectionClass) {
-        try {
-            Field field = reflectionClass.getDeclaredField("slot");
-            field.setAccessible(true);
-            return field;
-        } catch (NoSuchFieldException | SecurityException e) {
-            throw new JVMCIError(e);
-        }
-    }
-
     public ResolvedJavaMethod lookupJavaMethod(Executable reflectionMethod) {
-        try {
-            Class<?> holder = reflectionMethod.getDeclaringClass();
-            Field slotField = reflectionMethod instanceof Constructor ? reflectionConstructorSlot : reflectionMethodSlot;
-            final int slot = slotField.getInt(reflectionMethod);
-            return runtime.getCompilerToVM().getResolvedJavaMethodAtSlot(holder, slot);
-        } catch (IllegalArgumentException | IllegalAccessException e) {
-            throw new JVMCIError(e);
-        }
+        return runtime.getCompilerToVM().asResolvedJavaMethod(Objects.requireNonNull(reflectionMethod));
     }
 
     public ResolvedJavaField lookupJavaField(Field reflectionField) {
@@ -152,7 +115,8 @@ public class HotSpotMetaAccessProvider implements MetaAccessProvider, HotSpotPro
         int actionValue = convertDeoptAction(action);
         int reasonValue = convertDeoptReason(reason);
         int debugValue = debugId & intMaskRight(config.deoptimizationDebugIdBits);
-        JavaConstant c = JavaConstant.forInt(~((debugValue << config.deoptimizationDebugIdShift) | (reasonValue << config.deoptimizationReasonShift) | (actionValue << config.deoptimizationActionShift)));
+        JavaConstant c = JavaConstant.forInt(
+                        ~((debugValue << config.deoptimizationDebugIdShift) | (reasonValue << config.deoptimizationReasonShift) | (actionValue << config.deoptimizationActionShift)));
         assert c.asInt() < 0;
         return c;
     }
@@ -316,7 +280,6 @@ public class HotSpotMetaAccessProvider implements MetaAccessProvider, HotSpotPro
                 return 0;
             } else {
                 if (lookupJavaType.isArray()) {
-                    // TODO(tw): Add compressed pointer support.
                     int length = Array.getLength(((HotSpotObjectConstantImpl) constant).object());
                     ResolvedJavaType elementType = lookupJavaType.getComponentType();
                     JavaKind elementKind = elementType.getJavaKind();

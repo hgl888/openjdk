@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,7 +24,6 @@
 package catalog;
 
 import javax.xml.catalog.CatalogResolver;
-import javax.xml.catalog.CatalogUriResolver;
 
 import org.testng.Assert;
 
@@ -41,7 +40,7 @@ class ResolutionChecker {
     static void checkExtIdResolution(CatalogResolver resolver,
             String publicId, String systemId, String matchedUri) {
         Assert.assertEquals(
-                resolver.resolveEntity(publicId, systemId).getSystemId(),
+                resolver.resolveEntity(publicId, getNotSpecified(systemId)).getSystemId(),
                 matchedUri);
     }
 
@@ -65,7 +64,7 @@ class ResolutionChecker {
      * Checks the resolution result for specified URI references
      * with the specified base location.
      */
-    static void checkUriResolution(CatalogUriResolver resolver,
+    static void checkUriResolution(CatalogResolver resolver,
             String href, String base, String matchedUri) {
         Assert.assertEquals(resolver.resolve(href, base).getSystemId(),
                 matchedUri);
@@ -74,7 +73,7 @@ class ResolutionChecker {
     /*
      * Checks the resolution result for specified URI references.
      */
-    static void checkUriResolution(CatalogUriResolver resolver,
+    static void checkUriResolution(CatalogResolver resolver,
             String href, String matchedUri) {
         checkUriResolution(resolver, href, null, matchedUri);
     }
@@ -92,10 +91,10 @@ class ResolutionChecker {
 
     /*
      * With strict resolution, if no match is found,
-     * CatalogUriResolver should throw CatalogException.
+     * CatalogResolver should throw CatalogException.
      */
-    static void checkNoMatch(CatalogUriResolver resolver) {
-        resolver.resolve("http://uri/noMatch/docNoMatch.dtd", null);
+    static void checkNoUriMatch(CatalogResolver resolver) {
+        resolver.resolve("http://uri/noMatch/docNoMatch.dtd", getNotSpecified(null));
     }
 
     /* ********** Checks expected exception ********** */
@@ -108,7 +107,7 @@ class ResolutionChecker {
             CatalogResolver resolver, String publicId, String systemId,
             Class<T> expectedExceptionClass) {
         expectThrows(expectedExceptionClass, () -> {
-            resolver.resolveEntity(publicId, systemId);
+            resolver.resolveEntity(publicId, getNotSpecified(systemId));
         });
     }
 
@@ -139,7 +138,7 @@ class ResolutionChecker {
      * URI reference with a specified base location.
      */
     static <T extends Throwable> void expectExceptionOnUri(
-            CatalogUriResolver resolver, String href, String base,
+            CatalogResolver resolver, String href, String base,
             Class<T> expectedExceptionClass) {
         expectThrows(expectedExceptionClass, () -> {
             resolver.resolve(href, base);
@@ -151,7 +150,7 @@ class ResolutionChecker {
      * URI reference without any specified base location.
      */
     static <T extends Throwable> void expectExceptionOnUri(
-            CatalogUriResolver resolver, String href,
+            CatalogResolver resolver, String href,
             Class<T> expectedExceptionClass) {
         expectExceptionOnUri(resolver, href, null, expectedExceptionClass);
     }
@@ -179,6 +178,18 @@ class ResolutionChecker {
                 "Expected %s to be thrown, but nothing was thrown",
                 throwableClass.getSimpleName());
         throw new AssertionError(message);
+    }
+
+    /*
+     * SystemId can never be null in XML. For publicId tests, if systemId is null,
+     * it will be considered as not-specified instead. A non-existent systemId
+     * is returned to make sure there's no match by the systemId.
+    */
+    private static String getNotSpecified(String systemId) {
+        if (systemId == null) {
+            return "not-specified-systemId.dtd";
+        }
+        return systemId;
     }
 
     private interface ThrowingRunnable {

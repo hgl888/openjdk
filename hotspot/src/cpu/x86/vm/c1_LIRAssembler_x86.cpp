@@ -1345,6 +1345,18 @@ void LIR_Assembler::emit_op3(LIR_Op3* op) {
                       op->result_opr(),
                       op->info());
       break;
+    case lir_fmad:
+      __ fmad(op->result_opr()->as_xmm_double_reg(),
+              op->in_opr1()->as_xmm_double_reg(),
+              op->in_opr2()->as_xmm_double_reg(),
+              op->in_opr3()->as_xmm_double_reg());
+      break;
+    case lir_fmaf:
+      __ fmaf(op->result_opr()->as_xmm_float_reg(),
+              op->in_opr1()->as_xmm_float_reg(),
+              op->in_opr2()->as_xmm_float_reg(),
+              op->in_opr3()->as_xmm_float_reg());
+      break;
     default:      ShouldNotReachHere(); break;
   }
 }
@@ -3132,6 +3144,23 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
   if (flags & LIR_OpArrayCopy::dst_null_check) {
     __ testptr(dst, dst);
     __ jcc(Assembler::zero, *stub->entry());
+  }
+
+  // If the compiler was not able to prove that exact type of the source or the destination
+  // of the arraycopy is an array type, check at runtime if the source or the destination is
+  // an instance type.
+  if (flags & LIR_OpArrayCopy::type_check) {
+    if (!(flags & LIR_OpArrayCopy::dst_objarray)) {
+      __ load_klass(tmp, dst);
+      __ cmpl(Address(tmp, in_bytes(Klass::layout_helper_offset())), Klass::_lh_neutral_value);
+      __ jcc(Assembler::greaterEqual, *stub->entry());
+    }
+
+    if (!(flags & LIR_OpArrayCopy::src_objarray)) {
+      __ load_klass(tmp, src);
+      __ cmpl(Address(tmp, in_bytes(Klass::layout_helper_offset())), Klass::_lh_neutral_value);
+      __ jcc(Assembler::greaterEqual, *stub->entry());
+    }
   }
 
   // check if negative

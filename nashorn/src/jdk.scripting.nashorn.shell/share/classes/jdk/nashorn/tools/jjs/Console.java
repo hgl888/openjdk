@@ -42,6 +42,8 @@ import jdk.internal.jline.WindowsTerminal;
 import jdk.internal.jline.console.ConsoleReader;
 import jdk.internal.jline.console.KeyMap;
 import jdk.internal.jline.extra.EditingHistory;
+import jdk.internal.misc.Signal;
+import jdk.internal.misc.Signal.Handler;
 
 class Console implements AutoCloseable {
     private static final String DOCUMENTATION_SHORTCUT = "\033\133\132"; //Shift-TAB
@@ -59,7 +61,8 @@ class Console implements AutoCloseable {
         in.setHandleUserInterrupt(true);
         in.setBellEnabled(true);
         in.setCopyPasteDetection(true);
-        in.setHistory(new EditingHistory(in, Files.readAllLines(historyFile.toPath())) {
+        final Iterable<String> existingHistory = historyFile.exists() ? Files.readAllLines(historyFile.toPath()) : null;
+        in.setHistory(new EditingHistory(in, existingHistory) {
             @Override protected boolean isComplete(CharSequence input) {
                 return completer.isComplete(input.toString());
             }
@@ -67,6 +70,21 @@ class Console implements AutoCloseable {
         in.addCompleter(completer);
         Runtime.getRuntime().addShutdownHook(new Thread((Runnable)this::saveHistory));
         bind(DOCUMENTATION_SHORTCUT, (ActionListener)evt -> showDocumentation(docHelper));
+        try {
+            Signal.handle(new Signal("CONT"), new Handler() {
+                @Override public void handle(Signal sig) {
+                    try {
+                        in.getTerminal().reset();
+                        in.redrawLine();
+                        in.flush();
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
+                }
+            });
+        } catch (IllegalArgumentException ignored) {
+            //the CONT signal does not exist on this platform
+        }
     }
 
     String readLine(final String prompt) throws IOException {

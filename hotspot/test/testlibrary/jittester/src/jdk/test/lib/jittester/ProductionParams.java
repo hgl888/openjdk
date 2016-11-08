@@ -73,8 +73,11 @@ public class ProductionParams {
     public static Option<String> testbaseDir = null;
     public static Option<Integer> numberOfTests = null;
     public static Option<String> seed = null;
+    public static Option<Long> specificSeed = null;
     public static Option<String> classesFile = null;
     public static Option<String> excludeMethodsFile = null;
+    public static Option<String> generators = null;
+    public static Option<String> generatorsFactories = null;
 
     public static void register(OptionResolver optionResolver) {
         productionLimit = optionResolver.addIntegerOption('l', "production-limit", 100, "Limit on steps in the production of an expression");
@@ -121,7 +124,10 @@ public class ProductionParams {
         testbaseDir = optionResolver.addStringOption("testbase-dir", ".", "Testbase dir");
         numberOfTests = optionResolver.addIntegerOption('n', "number-of-tests", 0, "Number of test classes to generate");
         seed = optionResolver.addStringOption("seed", "", "Random seed");
-        classesFile = optionResolver.addStringOption('f', "classes-file", "", "File to read classes from");
-        excludeMethodsFile = optionResolver.addStringOption('r', "exclude-methods-file", "", "File to read excluded methods from");
+        specificSeed = optionResolver.addLongOption('z', "specificSeed", 0L, "A seed to be set for specific test generation(regular seed still needed for initialization)");
+        classesFile = optionResolver.addStringOption('f', "classes-file", "conf/classes.lst", "File to read classes from");
+        excludeMethodsFile = optionResolver.addStringOption('r', "exclude-methods-file", "conf/exclude.methods.lst", "File to read excluded methods from");
+        generators = optionResolver.addStringOption("generators", "", "Comma-separated list of generator names");
+        generatorsFactories = optionResolver.addStringOption("generatorsFactories", "", "Comma-separated list of generators factories class names");
     }
 }

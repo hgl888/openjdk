@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,7 +22,7 @@
  */
 package jdk.vm.ci.hotspot.aarch64;
 
-import static jdk.vm.ci.inittimer.InitTimer.timer;
+import static jdk.vm.ci.common.InitTimer.timer;
 
 import java.util.EnumSet;
 
@@ -31,31 +31,30 @@ import jdk.vm.ci.code.Architecture;
 import jdk.vm.ci.code.RegisterConfig;
 import jdk.vm.ci.code.TargetDescription;
 import jdk.vm.ci.code.stack.StackIntrospection;
+import jdk.vm.ci.common.InitTimer;
 import jdk.vm.ci.hotspot.HotSpotCodeCacheProvider;
 import jdk.vm.ci.hotspot.HotSpotConstantReflectionProvider;
 import jdk.vm.ci.hotspot.HotSpotJVMCIBackendFactory;
 import jdk.vm.ci.hotspot.HotSpotJVMCIRuntimeProvider;
 import jdk.vm.ci.hotspot.HotSpotMetaAccessProvider;
 import jdk.vm.ci.hotspot.HotSpotStackIntrospection;
-import jdk.vm.ci.hotspot.HotSpotVMConfig;
-import jdk.vm.ci.inittimer.InitTimer;
 import jdk.vm.ci.meta.ConstantReflectionProvider;
 import jdk.vm.ci.runtime.JVMCIBackend;
 
 public class AArch64HotSpotJVMCIBackendFactory implements HotSpotJVMCIBackendFactory {
 
-    protected EnumSet<AArch64.CPUFeature> computeFeatures(@SuppressWarnings("unused") HotSpotVMConfig config) {
+    protected EnumSet<AArch64.CPUFeature> computeFeatures(@SuppressWarnings("unused") AArch64HotSpotVMConfig config) {
         // Configure the feature set using the HotSpot flag settings.
         EnumSet<AArch64.CPUFeature> features = EnumSet.noneOf(AArch64.CPUFeature.class);
         return features;
     }
 
-    protected EnumSet<AArch64.Flag> computeFlags(@SuppressWarnings("unused") HotSpotVMConfig config) {
+    protected EnumSet<AArch64.Flag> computeFlags(@SuppressWarnings("unused") AArch64HotSpotVMConfig config) {
         EnumSet<AArch64.Flag> flags = EnumSet.noneOf(AArch64.Flag.class);
         return flags;
     }
 
-    protected TargetDescription createTarget(HotSpotVMConfig config) {
+    protected TargetDescription createTarget(AArch64HotSpotVMConfig config) {
         final int stackFrameAlignment = 16;
         final int implicitNullCheckLimit = 4096;
         final boolean inlineObjects = true;
@@ -67,8 +66,8 @@ public class AArch64HotSpotJVMCIBackendFactory implements HotSpotJVMCIBackendFac
         return new HotSpotConstantReflectionProvider(runtime);
     }
 
-    protected RegisterConfig createRegisterConfig(HotSpotJVMCIRuntimeProvider runtime, TargetDescription target) {
-        return new AArch64HotSpotRegisterConfig(target.arch, runtime.getConfig());
+    protected RegisterConfig createRegisterConfig(AArch64HotSpotVMConfig config, TargetDescription target) {
+        return new AArch64HotSpotRegisterConfig(target, config.useCompressedOops);
     }
 
     protected HotSpotCodeCacheProvider createCodeCache(HotSpotJVMCIRuntimeProvider runtime, TargetDescription target, RegisterConfig regConfig) {
@@ -93,7 +92,8 @@ public class AArch64HotSpotJVMCIBackendFactory implements HotSpotJVMCIBackendFac
     public JVMCIBackend createJVMCIBackend(HotSpotJVMCIRuntimeProvider runtime, JVMCIBackend host) {
 
         assert host == null;
-        TargetDescription target = createTarget(runtime.getConfig());
+        AArch64HotSpotVMConfig config = new AArch64HotSpotVMConfig(runtime.getConfigStore());
+        TargetDescription target = createTarget(config);
 
         RegisterConfig regConfig;
         HotSpotCodeCacheProvider codeCache;
@@ -105,7 +105,7 @@ public class AArch64HotSpotJVMCIBackendFactory implements HotSpotJVMCIBackendFac
                 metaAccess = createMetaAccess(runtime);
             }
             try (InitTimer rt = timer("create RegisterConfig")) {
-                regConfig = createRegisterConfig(runtime, target);
+                regConfig = createRegisterConfig(config, target);
             }
             try (InitTimer rt = timer("create CodeCache provider")) {
                 codeCache = createCodeCache(runtime, target, regConfig);
@@ -122,7 +122,8 @@ public class AArch64HotSpotJVMCIBackendFactory implements HotSpotJVMCIBackendFac
         }
     }
 
-    protected JVMCIBackend createBackend(HotSpotMetaAccessProvider metaAccess, HotSpotCodeCacheProvider codeCache, ConstantReflectionProvider constantReflection, StackIntrospection stackIntrospection) {
+    protected JVMCIBackend createBackend(HotSpotMetaAccessProvider metaAccess, HotSpotCodeCacheProvider codeCache, ConstantReflectionProvider constantReflection,
+                    StackIntrospection stackIntrospection) {
         return new JVMCIBackend(metaAccess, codeCache, constantReflection, stackIntrospection);
     }
 }

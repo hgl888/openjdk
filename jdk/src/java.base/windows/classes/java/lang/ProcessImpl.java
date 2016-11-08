@@ -443,7 +443,7 @@ final class ProcessImpl extends Process {
                 FileDescriptor stdout_fd = new FileDescriptor();
                 fdAccess.setHandle(stdout_fd, stdHandles[1]);
                 stdout_stream = new BufferedInputStream(
-                    new FileInputStream(stdout_fd));
+                    new PipeInputStream(stdout_fd));
             }
 
             if (stdHandles[2] == -1L)
@@ -451,7 +451,7 @@ final class ProcessImpl extends Process {
             else {
                 FileDescriptor stderr_fd = new FileDescriptor();
                 fdAccess.setHandle(stderr_fd, stdHandles[2]);
-                stderr_stream = new FileInputStream(stderr_fd);
+                stderr_stream = new PipeInputStream(stderr_fd);
             }
 
             return null; }});
@@ -562,6 +562,20 @@ final class ProcessImpl extends Process {
     }
 
     private static native boolean isProcessAlive(long handle);
+
+    /**
+     * The {@code toString} method returns a string consisting of
+     * the native process ID of the process and the exit value of the process.
+     *
+     * @return a string representation of the object.
+     */
+    @Override
+    public String toString() {
+        int exitCode = getExitCodeProcess(handle);
+        return new StringBuilder("Process[pid=").append(getPid())
+                .append(", exitValue=").append(exitCode == STILL_ACTIVE ? "\"not exited\"" : exitCode)
+                .append("]").toString();
+    }
 
     /**
      * Create a process using the win32 function CreateProcess.

@@ -61,7 +61,7 @@
 #include "memory/resourceArea.hpp"
 #include "oops/oop.inline.hpp"
 #include "prims/jvmtiExport.hpp"
-#include "runtime/atomic.inline.hpp"
+#include "runtime/atomic.hpp"
 #include "runtime/globals_extension.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/java.hpp"
@@ -545,6 +545,8 @@ CMSCollector::CMSCollector(ConcurrentMarkSweepGeneration* cmsGen,
   }
   assert((_conc_workers != NULL) == (ConcGCThreads > 1),
          "Inconsistency");
+  log_debug(gc)("ConcGCThreads: %u", ConcGCThreads);
+  log_debug(gc)("ParallelGCThreads: %u", ParallelGCThreads);
 
   // Parallel task queues; these are shared for the
   // concurrent and stop-world phases of CMS, but
@@ -1602,6 +1604,9 @@ void CMSCollector::do_compaction_work(bool clear_all_soft_refs) {
   // Restart the "inter sweep timer" for the next epoch.
   _inter_sweep_timer.reset();
   _inter_sweep_timer.start();
+
+  // No longer a need to do a concurrent collection for Metaspace.
+  MetaspaceGC::set_should_concurrent_collect(false);
 
   gch->post_full_gc_dump(gc_timer);
 
@@ -2883,7 +2888,10 @@ void CMSCollector::checkpointRootsInitialWork() {
 
       CMSParInitialMarkTask tsk(this, &srs, n_workers);
       initialize_sequential_subtasks_for_young_gen_rescan(n_workers);
-      if (n_workers > 1) {
+      // If the total workers is greater than 1, then multiple workers
+      // may be used at some time and the initialization has been set
+      // such that the single threaded path cannot be used.
+      if (workers->total_workers() > 1) {
         workers->run_task(&tsk);
       } else {
         tsk.work(0);
@@ -3017,14 +3025,14 @@ class CMSConcMarkingTerminatorTerminator: public TerminatorTerminator {
 
 // MT Concurrent Marking Task
 class CMSConcMarkingTask: public YieldingFlexibleGangTask {
-  CMSCollector* _collector;
-  uint          _n_workers;       // requested/desired # workers
-  bool          _result;
-  CompactibleFreeListSpace*  _cms_space;
-  char          _pad_front[64];   // padding to ...
-  HeapWord*     _global_finger;   // ... avoid sharing cache line
-  char          _pad_back[64];
-  HeapWord*     _restart_addr;
+  CMSCollector*             _collector;
+  uint                      _n_workers;      // requested/desired # workers
+  bool                      _result;
+  CompactibleFreeListSpace* _cms_space;
+  char                      _pad_front[64];   // padding to ...
+  HeapWord* volatile        _global_finger;   // ... avoid sharing cache line
+  char                      _pad_back[64];
+  HeapWord*                 _restart_addr;
 
   //  Exposed here for yielding support
   Mutex* const _bit_map_lock;
@@ -3060,7 +3068,7 @@ class CMSConcMarkingTask: public YieldingFlexibleGangTask {
 
   OopTaskQueue* work_queue(int i) { return task_queues()->queue(i); }
 
-  HeapWord** global_finger_addr() { return &_global_finger; }
+  HeapWord* volatile* global_finger_addr() { return &_global_finger; }
 
   CMSConcMarkingTerminator* terminator() { return &_term; }
 
@@ -3502,7 +3510,8 @@ bool CMSCollector::do_marking_mt() {
   uint num_workers = AdaptiveSizePolicy::calc_active_conc_workers(conc_workers()->total_workers(),
                                                                   conc_workers()->active_workers(),
                                                                   Threads::number_of_non_daemon_threads());
-  conc_workers()->set_active_workers(num_workers);
+  num_workers = conc_workers()->update_active_workers(num_workers);
+  log_info(gc,task)("Using %u workers of %u for marking", num_workers, conc_workers()->total_workers());
 
   CompactibleFreeListSpace* cms_space  = _cmsGen->cmsSpace();
 
@@ -6094,19 +6103,23 @@ size_t ScanMarkedObjectsAgainCarefullyClosure::do_object_careful_m(
           size = CompactibleFreeListSpace::adjustObjectSize(
                    p->oop_iterate_size(_scanningClosure));
         }
-        #ifdef ASSERT
-          size_t direct_size =
-            CompactibleFreeListSpace::adjustObjectSize(p->size());
-          assert(size == direct_size, "Inconsistency in size");
-          assert(size >= 3, "Necessary for Printezis marks to work");
-          if (!_bitMap->isMarked(addr+1)) {
-            _bitMap->verifyNoOneBitsInRange(addr+2, addr+size);
-          } else {
-            _bitMap->verifyNoOneBitsInRange(addr+2, addr+size-1);
-            assert(_bitMap->isMarked(addr+size-1),
-                   "inconsistent Printezis mark");
-          }
-        #endif // ASSERT
+      #ifdef ASSERT
+        size_t direct_size =
+          CompactibleFreeListSpace::adjustObjectSize(p->size());
+        assert(size == direct_size, "Inconsistency in size");
+        assert(size >= 3, "Necessary for Printezis marks to work");
+        HeapWord* start_pbit = addr + 1;
+        HeapWord* end_pbit = addr + size - 1;
+        assert(_bitMap->isMarked(start_pbit) == _bitMap->isMarked(end_pbit),
+               "inconsistent Printezis mark");
+        // Verify inner mark bits (between Printezis bits) are clear,
+        // but don't repeat if there are multiple dirty regions for
+        // the same object, to avoid potential O(N^2) performance.
+        if (addr != _last_scanned_object) {
+          _bitMap->verifyNoOneBitsInRange(start_pbit + 1, end_pbit);
+          _last_scanned_object = addr;
+        }
+      #endif // ASSERT
     } else {
       // An uninitialized object.
       assert(_bitMap->isMarked(addr+1), "missing Printezis mark?");
@@ -6541,7 +6554,7 @@ void ParMarkFromRootsClosure::scan_oops_in_oop(HeapWord* ptr) {
 
   // Note: the local finger doesn't advance while we drain
   // the stack below, but the global finger sure can and will.
-  HeapWord** gfa = _task->global_finger_addr();
+  HeapWord* volatile* gfa = _task->global_finger_addr();
   ParPushOrMarkClosure pushOrMarkClosure(_collector,
                                          _span, _bit_map,
                                          _work_queue,
@@ -6708,7 +6721,7 @@ ParPushOrMarkClosure::ParPushOrMarkClosure(CMSCollector* collector,
                                            OopTaskQueue* work_queue,
                                            CMSMarkStack*  overflow_stack,
                                            HeapWord* finger,
-                                           HeapWord** global_finger_addr,
+                                           HeapWord* volatile* global_finger_addr,
                                            ParMarkFromRootsClosure* parent) :
   MetadataAwareOopClosure(collector->ref_processor()),
   _collector(collector),

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1996, 2014, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1996, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -107,6 +107,9 @@ LRESULT CALLBACK FileDialogWndProc(HWND hWnd, UINT message,
             }
             break;
         }
+        case WM_SETICON: {
+            return 0;
+        }
     }
 
     WNDPROC lpfnWndProc = (WNDPROC)(::GetProp(hWnd, NativeDialogWndProcProp));
@@ -140,6 +143,11 @@ FileDialogHookProc(HWND hdlg, UINT uiMsg, WPARAM wParam, LPARAM lParam)
                 ::SendMessage(parent, WM_SETICON, (WPARAM)ICON_BIG,
                               (LPARAM)AwtToolkit::GetInstance().GetAwtIcon());
             } else {
+                AwtWindow *awtWindow = (AwtWindow *)JNI_GET_PDATA(awtParent);
+                ::SendMessage(parent, WM_SETICON, (WPARAM)ICON_BIG,
+                                               (LPARAM)(awtWindow->GetHIcon()));
+                ::SendMessage(parent, WM_SETICON, (WPARAM)ICON_SMALL,
+                                             (LPARAM)(awtWindow->GetHIconSm()));
                 env->DeleteLocalRef(awtParent);
             }
 
@@ -349,9 +357,9 @@ AwtFileDialog::Show(void *p)
 
         // show the Win32 file dialog
         if (mode == java_awt_FileDialog_LOAD) {
-            result = AwtFileDialog::GetOpenFileName(&ofn);
+            result = ::GetOpenFileName(&ofn);
         } else {
-            result = AwtFileDialog::GetSaveFileName(&ofn);
+            result = ::GetSaveFileName(&ofn);
         }
         // Fix for 4181310: FileDialog does not show up.
         // If the dialog is not shown because of invalid file name
@@ -361,9 +369,9 @@ AwtFileDialog::Show(void *p)
             if (dlgerr == FNERR_INVALIDFILENAME) {
                 _tcscpy_s(fileBuffer, bufferLimit, TEXT(""));
                 if (mode == java_awt_FileDialog_LOAD) {
-                    result = AwtFileDialog::GetOpenFileName(&ofn);
+                    result = ::GetOpenFileName(&ofn);
                 } else {
-                    result = AwtFileDialog::GetSaveFileName(&ofn);
+                    result = ::GetSaveFileName(&ofn);
                 }
             }
         }
@@ -420,22 +428,6 @@ AwtFileDialog::Show(void *p)
     delete[] currentDirectory;
     if (ofn.lpstrFile)
         delete[] ofn.lpstrFile;
-}
-
-BOOL
-AwtFileDialog::GetOpenFileName(LPOPENFILENAME data) {
-    return static_cast<BOOL>(reinterpret_cast<INT_PTR>(
-        AwtToolkit::GetInstance().InvokeFunction((void*(*)(void*))
-                     ::GetOpenFileName, data)));
-
-}
-
-BOOL
-AwtFileDialog::GetSaveFileName(LPOPENFILENAME data) {
-    return static_cast<BOOL>(reinterpret_cast<INT_PTR>(
-        AwtToolkit::GetInstance().InvokeFunction((void *(*)(void *))
-                     ::GetSaveFileName, data)));
-
 }
 
 BOOL AwtFileDialog::InheritsNativeMouseWheelBehavior() {return true;}
@@ -585,9 +577,10 @@ Java_sun_awt_windows_WFileDialogPeer__1show(JNIEnv *env, jobject peer)
      */
     jobject peerGlobal = env->NewGlobalRef(peer);
 
-    AwtToolkit::GetInstance().InvokeFunction(AwtFileDialog::Show, peerGlobal);
-
-    env->DeleteGlobalRef(peerGlobal);
+    if (!AwtToolkit::GetInstance().PostMessage(WM_AWT_INVOKE_METHOD,
+                             (WPARAM)AwtFileDialog::Show, (LPARAM)peerGlobal)) {
+        env->DeleteGlobalRef(peerGlobal);
+    }
 
     CATCH_BAD_ALLOC;
 }
@@ -642,6 +635,74 @@ Java_sun_awt_windows_WFileDialogPeer_toBack(JNIEnv *env, jobject peer)
     // global ref is deleted in _ToBack
 
     CATCH_BAD_ALLOC;
+}
+
+int ScaleDownX(int x, HWND hwnd) {
+    int screen = AwtWin32GraphicsDevice::DeviceIndexForWindow(hwnd);
+    Devices::InstanceAccess devices;
+    AwtWin32GraphicsDevice* device = devices->GetDevice(screen);
+    return device == NULL ? x : device->ScaleDownX(x);
+}
+
+int ScaleDownY(int y, HWND hwnd) {
+    int screen = AwtWin32GraphicsDevice::DeviceIndexForWindow(hwnd);
+    Devices::InstanceAccess devices;
+    AwtWin32GraphicsDevice* device = devices->GetDevice(screen);
+    return device == NULL ? y : device->ScaleDownY(y);
+}
+
+jobject AwtFileDialog::_GetLocationOnScreen(void *param)
+{
+    JNIEnv *env = (JNIEnv *)JNU_GetEnv(jvm, JNI_VERSION_1_2);
+
+    jobject result = NULL;
+    HWND hwnd = (HWND)env->GetLongField((jobject)param, AwtComponent::hwndID);
+
+    if (::IsWindow(hwnd))
+    {
+        RECT rect;
+        VERIFY(::GetWindowRect(hwnd, &rect));
+        result = JNU_NewObjectByName(env, "java/awt/Point", "(II)V",
+                       ScaleDownX(rect.left, hwnd), ScaleDownY(rect.top, hwnd));
+    }
+
+    if (result != NULL)
+    {
+        jobject resultRef = env->NewGlobalRef(result);
+        env->DeleteLocalRef(result);
+        return resultRef;
+    }
+    else
+    {
+        return NULL;
+    }
+}
+
+/*
+ * Class:     sun_awt_windows_WFileDialogPeer
+ * Method:    getLocationOnScreen
+ * Signature: ()Ljava/awt/Point;
+ */
+JNIEXPORT jobject JNICALL
+Java_sun_awt_windows_WFileDialogPeer_getLocationOnScreen(JNIEnv *env,
+                                                                 jobject peer) {
+    TRY;
+
+    jobject peerRef = env->NewGlobalRef(peer);
+    jobject resultRef = (jobject)AwtToolkit::GetInstance().SyncCall(
+        (void*(*)(void*))AwtFileDialog::_GetLocationOnScreen, (void *)peerRef);
+    env->DeleteLocalRef(peerRef);
+
+    if (resultRef != NULL)
+    {
+        jobject result = env->NewLocalRef(resultRef);
+        env->DeleteGlobalRef(resultRef);
+        return result;
+    }
+
+    return NULL;
+
+    CATCH_BAD_ALLOC_RET(NULL);
 }
 
 } /* extern "C" */

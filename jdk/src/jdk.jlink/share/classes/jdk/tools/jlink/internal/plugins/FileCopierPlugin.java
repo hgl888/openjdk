@@ -26,7 +26,6 @@ package jdk.tools.jlink.internal.plugins;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.FileVisitor;
@@ -35,24 +34,22 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
-import jdk.tools.jlink.internal.ModuleEntryImpl;
+import jdk.tools.jlink.internal.PathResourcePoolEntry;
 import jdk.tools.jlink.plugin.PluginException;
-import jdk.tools.jlink.plugin.ModuleEntry;
-import jdk.tools.jlink.plugin.ModulePool;
-import jdk.tools.jlink.plugin.TransformerPlugin;
+import jdk.tools.jlink.plugin.ResourcePool;
+import jdk.tools.jlink.plugin.ResourcePoolBuilder;
+import jdk.tools.jlink.plugin.ResourcePoolEntry;
+import jdk.tools.jlink.plugin.Plugin;
 import jdk.tools.jlink.internal.Utils;
 
 /**
  *
  * Copy files to image from various locations.
  */
-public class FileCopierPlugin implements TransformerPlugin {
+public class FileCopierPlugin implements Plugin {
 
     public static final String NAME = "copy-files";
 
@@ -61,20 +58,18 @@ public class FileCopierPlugin implements TransformerPlugin {
         Path source;
         Path target;
     }
-    public static final String FAKE_MODULE = "$jlink-file-copier";
-
     private final List<CopiedFile> files = new ArrayList<>();
 
     /**
      * Symbolic link to another path.
      */
-    public static abstract class SymImageFile extends ModuleEntryImpl {
+    public static abstract class SymImageFile extends PathResourcePoolEntry {
 
         private final String targetPath;
 
         public SymImageFile(String targetPath, String module, String path,
-                ModuleEntry.Type type, InputStream stream, long size) {
-            super(module, path, type, stream, size);
+                ResourcePoolEntry.Type type, Path file) {
+            super(module, path, type, file);
             this.targetPath = targetPath;
         }
 
@@ -86,35 +81,19 @@ public class FileCopierPlugin implements TransformerPlugin {
     private static final class SymImageFileImpl extends SymImageFile {
 
         public SymImageFileImpl(String targetPath, Path file, String module,
-                String path, ModuleEntry.Type type) {
-            super(targetPath, module, path, type, newStream(file), length(file));
-        }
-    }
-
-    private static long length(Path file) {
-        try {
-            return Files.size(file);
-        } catch (IOException ex) {
-            throw new RuntimeException(ex);
-        }
-    }
-
-    private static InputStream newStream(Path file) {
-        try {
-            return Files.newInputStream(file);
-        } catch (IOException ex) {
-            throw new UncheckedIOException(ex);
+                String path, ResourcePoolEntry.Type type) {
+            super(targetPath, module, path, type, file);
         }
     }
 
     private static final class DirectoryCopy implements FileVisitor<Path> {
 
         private final Path source;
-        private final ModulePool pool;
+        private final ResourcePoolBuilder pool;
         private final String targetDir;
         private final List<SymImageFile> symlinks = new ArrayList<>();
 
-        DirectoryCopy(Path source, ModulePool pool, String targetDir) {
+        DirectoryCopy(Path source, ResourcePoolBuilder pool, String targetDir) {
             this.source = source;
             this.pool = pool;
             this.targetDir = targetDir;
@@ -148,7 +127,7 @@ public class FileCopierPlugin implements TransformerPlugin {
                 }
                 SymImageFileImpl impl = new SymImageFileImpl(symTarget.toString(),
                         file, path, Objects.requireNonNull(file.getFileName()).toString(),
-                        ModuleEntry.Type.OTHER);
+                        ResourcePoolEntry.Type.OTHER);
                 symlinks.add(impl);
             } else {
                 addFile(pool, file, path);
@@ -172,14 +151,14 @@ public class FileCopierPlugin implements TransformerPlugin {
         }
     }
 
-    private static void addFile(ModulePool pool, Path file, String path)
+    private static void addFile(ResourcePoolBuilder pool, Path file, String path)
             throws IOException {
         Objects.requireNonNull(pool);
         Objects.requireNonNull(file);
         Objects.requireNonNull(path);
-        ModuleEntry impl = ModuleEntry.create(FAKE_MODULE,
-                "/" + FAKE_MODULE + "/other/" + path,
-                ModuleEntry.Type.OTHER, newStream(file), length(file));
+        ResourcePoolEntry impl = ResourcePoolEntry.create(
+                "/java.base/other/" + path,
+                ResourcePoolEntry.Type.OTHER, file);
         try {
             pool.add(impl);
         } catch (Exception ex) {
@@ -188,22 +167,14 @@ public class FileCopierPlugin implements TransformerPlugin {
     }
 
     @Override
-    public Set<Category> getType() {
-        Set<Category> set = new HashSet<>();
-        set.add(Category.TRANSFORMER);
-        return Collections.unmodifiableSet(set);
-    }
-
-    @Override
     public void configure(Map<String, String> config) {
-        String val = config.get(NAME);
-        String[] argument = Utils.listParser.apply(val);
-        if (argument == null || argument.length == 0) {
+        List<String> arguments = Utils.parseList(config.get(NAME));
+        if (arguments.isEmpty()) {
             throw new RuntimeException("Invalid argument for " + NAME);
         }
 
         String javahome = System.getProperty("java.home");
-        for (String a : argument) {
+        for (String a : arguments) {
             int i = a.indexOf("=");
             CopiedFile cf = new CopiedFile();
             if (i == -1) {
@@ -239,7 +210,7 @@ public class FileCopierPlugin implements TransformerPlugin {
     }
 
     @Override
-    public void visit(ModulePool in, ModulePool out) {
+    public ResourcePool transform(ResourcePool in, ResourcePoolBuilder out) {
         in.transformAndCopy((file) -> {
             return file;
         }, out);
@@ -266,6 +237,8 @@ public class FileCopierPlugin implements TransformerPlugin {
         } catch (IOException ex) {
             throw new UncheckedIOException(ex);
         }
+
+        return out.build();
     }
 
     @Override

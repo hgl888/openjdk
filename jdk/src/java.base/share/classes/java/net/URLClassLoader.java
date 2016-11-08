@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -51,7 +51,7 @@ import java.util.jar.Manifest;
 
 import jdk.internal.loader.Resource;
 import jdk.internal.loader.URLClassPath;
-import jdk.internal.misc.JavaNetAccess;
+import jdk.internal.misc.JavaNetURLClassLoaderAccess;
 import jdk.internal.misc.SharedSecrets;
 import jdk.internal.perf.PerfCounter;
 import sun.net.www.ParseUtil;
@@ -59,9 +59,11 @@ import sun.security.util.SecurityConstants;
 
 /**
  * This class loader is used to load classes and resources from a search
- * path of URLs referring to both JAR files and directories. Any URL that
- * ends with a '/' is assumed to refer to a directory. Otherwise, the URL
- * is assumed to refer to a JAR file which will be opened as needed.
+ * path of URLs referring to both JAR files and directories. Any {@code jar:}
+ * scheme URL (see {@link java.net.JarURLConnection}) is assumed to refer to a
+ * JAR file.  Any {@code file:} scheme URL that ends with a '/' is assumed to
+ * refer to a directory. Otherwise, the URL is assumed to refer to a JAR file
+ * which will be opened as needed.
  * <p>
  * The AccessControlContext of the thread that created the instance of
  * URLClassLoader will be used when subsequently loading classes and
@@ -83,9 +85,11 @@ public class URLClassLoader extends SecureClassLoader implements Closeable {
     /**
      * Constructs a new URLClassLoader for the given URLs. The URLs will be
      * searched in the order specified for classes and resources after first
-     * searching in the specified parent class loader. Any URL that ends with
-     * a '/' is assumed to refer to a directory. Otherwise, the URL is assumed
-     * to refer to a JAR file which will be downloaded and opened as needed.
+     * searching in the specified parent class loader.  Any {@code jar:}
+     * scheme URL is assumed to refer to a JAR file.  Any {@code file:} scheme
+     * URL that ends with a '/' is assumed to refer to a directory.  Otherwise,
+     * the URL is assumed to refer to a JAR file which will be downloaded and
+     * opened as needed.
      *
      * <p>If there is a security manager, this method first
      * calls the security manager's {@code checkCreateClassLoader} method
@@ -763,10 +767,11 @@ public class URLClassLoader extends SecureClassLoader implements Closeable {
     }
 
     static {
-        SharedSecrets.setJavaNetAccess(
-            new JavaNetAccess() {
-                public URLClassPath getURLClassPath(URLClassLoader u) {
-                    return u.ucp;
+        SharedSecrets.setJavaNetURLClassLoaderAccess(
+            new JavaNetURLClassLoaderAccess() {
+                @Override
+                public AccessControlContext getAccessControlContext(URLClassLoader u) {
+                    return u.acc;
                 }
             }
         );

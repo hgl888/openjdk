@@ -38,7 +38,7 @@ import jdk.test.lib.jittester.classes.Klass;
 import jdk.test.lib.jittester.types.TypeKlass;
 import jdk.test.lib.jittester.utils.PseudoRandom;
 
-class ClassDefinitionBlockFactory extends Factory {
+class ClassDefinitionBlockFactory extends Factory<ClassDefinitionBlock> {
     private final String prefix;
     private final long complexityLimit;
     private final int classesLimit;
@@ -62,7 +62,7 @@ class ClassDefinitionBlockFactory extends Factory {
     }
 
     @Override
-    public IRNode produce() throws ProductionFailedException {
+    public ClassDefinitionBlock produce() throws ProductionFailedException {
         ArrayList<IRNode> content = new ArrayList<>();
         int limit = (int) Math.ceil(PseudoRandom.random() * classesLimit);
         if (limit > 0) {
@@ -74,9 +74,8 @@ class ClassDefinitionBlockFactory extends Factory {
                     .setComplexityLimit(classCompl);
             for (int i = 0; i < limit; i++) {
                 try {
-                    Rule rule = new Rule("class");
+                    Rule<IRNode> rule = new Rule<>("class");
                     rule.add("basic_class", builder.setName(prefix + "_Class_" + i)
-                            .setPrinterName(prefix + ".Printer")
                             .setMemberFunctionsLimit(memberFunctionsLimit)
                             .getKlassFactory());
                     if (!ProductionParams.disableInterfaces.value()) {
@@ -103,20 +102,24 @@ class ClassDefinitionBlockFactory extends Factory {
         addMoreChildren(childs, content, minDepth);
     }
 
-    private void addMoreChildren(List<IRNode> childs, Collection<IRNode> content, int minDepth)
-        throws ProductionFailedException {
-        while (!childs.isEmpty() && IRNode.countDepth(content) < minDepth) {
-            PseudoRandom.shuffle(childs);
-            IRNode randomChild = childs.get(0);
+    private void addMoreChildren(List<IRNode> children, Collection<IRNode> content, int minDepth)
+            throws ProductionFailedException {
+        /* check situation when no stackable leaves available in all children */
+        if (IRNode.getModifiableNodesCount(children) == 0L) {
+            return;
+        }
+        /* now let's try to add children */
+        while (!children.isEmpty() && IRNode.countDepth(content) < minDepth) {
+            PseudoRandom.shuffle(children);
+            IRNode randomChild = children.get(0);
             List<IRNode> leaves = randomChild.getStackableLeaves();
             if (!leaves.isEmpty()) {
-                PseudoRandom.shuffle(leaves);
-                Block randomLeaf = (Block) leaves.get(0);
-                TypeKlass klass = (TypeKlass) randomChild.getKlass();
+                Block randomLeaf = (Block) leaves.get(PseudoRandom.randomNotNegative(leaves.size()));
+                TypeKlass owner = randomChild.getOwner();
                 int newLevel = randomLeaf.getLevel() + 1;
-                Type retType = randomLeaf.getReturnType();
+                Type retType = randomLeaf.getResultType();
                 IRNodeBuilder b = new IRNodeBuilder()
-                        .setOwnerKlass(klass)
+                        .setOwnerKlass(owner)
                         .setResultType(retType)
                         .setComplexityLimit(complexityLimit)
                         .setStatementLimit(statementLimit)
@@ -133,18 +136,11 @@ class ClassDefinitionBlockFactory extends Factory {
 
     private void ensureMaxDepth(Collection<IRNode> content) {
         int maxDepth = ProductionParams.maxCfgDepth.value();
-        List<IRNode> childs = content.stream()
+        List<IRNode> childrenClasses = content.stream()
                 .filter(c -> c instanceof Klass && c.countDepth() > maxDepth)
                 .collect(Collectors.toList());
-        for (IRNode ch : childs) {
-            List<IRNode> leaves = null;
-            do {
-                long depth = Math.max(ch.countDepth(), maxDepth + 1);
-                leaves = ch.getDeviantBlocks(depth);
-                if(leaves.size() > 0) {
-                    leaves.get(0).removeSelf();
-                }
-            } while (!leaves.isEmpty() && ch.countDepth() > maxDepth);
-        }
+        /* now attempt to reduce depth by removing optional parts of control deviation
+           blocks in case IRTree has oversized depth */
+        IRNode.tryToReduceNodesDepth(childrenClasses, maxDepth);
     }
 }

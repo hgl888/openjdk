@@ -21,7 +21,7 @@
  * questions.
  */
 
-/**
+/*
  * @test
  * @bug 4856966
  * @summary Verify that the RSA KeyPairGenerator works (use -Dseed=X to set PRNG seed)
@@ -29,9 +29,11 @@
  * @library ..
  * @library /lib/testlibrary
  * @build jdk.testlibrary.*
- * @run main/othervm TestKeyPairGenerator
- * @run main/othervm TestKeyPairGenerator sm TestKeyPairGenerator.policy
- * @key intermittent randomness
+ * @modules jdk.crypto.pkcs11
+ * @run main/othervm -Djava.security.debug=sunpkcs11 TestKeyPairGenerator
+ * @run main/othervm -Djava.security.debug=sunpkcs11 TestKeyPairGenerator
+ *                                                   sm TestKeyPairGenerator.policy
+ * @key randomness
  */
 
 import java.math.BigInteger;

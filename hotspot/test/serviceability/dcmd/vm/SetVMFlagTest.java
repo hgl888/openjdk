@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,7 +21,7 @@
  * questions.
  */
 
-import jdk.test.lib.OutputAnalyzer;
+import jdk.test.lib.process.OutputAnalyzer;
 import jdk.test.lib.dcmd.CommandExecutor;
 import jdk.test.lib.dcmd.JMXExecutor;
 import org.testng.annotations.Test;
@@ -32,9 +32,7 @@ import static org.testng.Assert.*;
  * @bug 8054890
  * @summary Test of VM.set_flag diagnostic command
  * @modules java.base/jdk.internal.misc
- * @library /testlibrary
- * @build jdk.test.lib.*
- * @build jdk.test.lib.dcmd.*
+ * @library /test/lib
  * @run testng SetVMFlagTest
  */
 
@@ -56,6 +54,25 @@ public class SetVMFlagTest {
         run(new JMXExecutor());
     }
 
+    private void setMutableFlagInternal(CommandExecutor executor, String flag,
+                                        boolean val, boolean isNumeric) {
+        String strFlagVal;
+        if (isNumeric) {
+            strFlagVal = val ? "1" : "0";
+        } else {
+            strFlagVal = val ? "true" : "false";
+        }
+
+        OutputAnalyzer out = executor.execute("VM.set_flag " + flag + " " + strFlagVal);
+        out.stderrShouldBeEmpty();
+
+        out = getAllFlags(executor);
+
+        String newFlagVal = out.firstMatch(MANAGEABLE_PATTERN.replace("(\\S+)", flag), 1);
+
+        assertNotEquals(newFlagVal, val ? "1" : "0");
+    }
+
     private void setMutableFlag(CommandExecutor executor) {
         OutputAnalyzer out = getAllFlags(executor);
         String flagName = out.firstMatch(MANAGEABLE_PATTERN, 1);
@@ -69,15 +86,8 @@ public class SetVMFlagTest {
         }
 
         Boolean blnVal = Boolean.parseBoolean(flagVal);
-
-        out = executor.execute("VM.set_flag " + flagName + " " + (blnVal ? 0 : 1));
-        out.stderrShouldBeEmpty();
-
-        out = getAllFlags(executor);
-
-        String newFlagVal = out.firstMatch(MANAGEABLE_PATTERN.replace("(\\S+)", flagName), 1);
-
-        assertNotEquals(newFlagVal, flagVal);
+        setMutableFlagInternal(executor, flagName, !blnVal, true);
+        setMutableFlagInternal(executor, flagName, blnVal, false);
     }
 
     private void setMutableFlagWithInvalidValue(CommandExecutor executor) {
@@ -95,7 +105,7 @@ public class SetVMFlagTest {
         // a boolean flag accepts only 0/1 as its value
         out = executor.execute("VM.set_flag " + flagName + " unexpected_value");
         out.stderrShouldBeEmpty();
-        out.stdoutShouldContain("flag value must be a boolean (1 or 0)");
+        out.stdoutShouldContain("flag value must be a boolean (1/0 or true/false)");
 
         out = getAllFlags(executor);
 

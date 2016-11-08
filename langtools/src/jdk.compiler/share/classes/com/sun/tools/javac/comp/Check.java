@@ -31,10 +31,13 @@ import javax.tools.JavaFileManager;
 
 import com.sun.tools.javac.code.*;
 import com.sun.tools.javac.code.Attribute.Compound;
+import com.sun.tools.javac.code.Directive.ExportsDirective;
+import com.sun.tools.javac.code.Directive.RequiresDirective;
 import com.sun.tools.javac.comp.Annotate.AnnotationTypeMetadata;
 import com.sun.tools.javac.jvm.*;
 import com.sun.tools.javac.resources.CompilerProperties.Errors;
 import com.sun.tools.javac.resources.CompilerProperties.Fragments;
+import com.sun.tools.javac.resources.CompilerProperties.Warnings;
 import com.sun.tools.javac.tree.*;
 import com.sun.tools.javac.util.*;
 import com.sun.tools.javac.util.JCDiagnostic.DiagnosticFlag;
@@ -84,7 +87,7 @@ public class Check {
     private final JavaFileManager fileManager;
     private final Source source;
     private final Profile profile;
-    private final boolean warnOnAccessToSensitiveMembers;
+    private final boolean warnOnAnyAccessToMembers;
 
     // The set of lint options currently in effect. It is initialized
     // from the context, and then is set/reset as needed by Attr as it
@@ -128,7 +131,7 @@ public class Check {
         allowStrictMethodClashCheck = source.allowStrictMethodClashCheck();
         allowPrivateSafeVarargs = source.allowPrivateSafeVarargs();
         allowDiamondWithAnonymousClassCreation = source.allowDiamondWithAnonymousClassCreation();
-        warnOnAccessToSensitiveMembers = options.isSet("warnOnAccessToSensitiveMembers");
+        warnOnAnyAccessToMembers = options.isSet("warnOnAccessToMembers");
 
         Target target = Target.instance(context);
         syntheticNameChar = target.syntheticNameChar();
@@ -136,11 +139,14 @@ public class Check {
         profile = Profile.instance(context);
 
         boolean verboseDeprecated = lint.isEnabled(LintCategory.DEPRECATION);
+        boolean verboseRemoval = lint.isEnabled(LintCategory.REMOVAL);
         boolean verboseUnchecked = lint.isEnabled(LintCategory.UNCHECKED);
         boolean enforceMandatoryWarnings = true;
 
         deprecationHandler = new MandatoryWarningHandler(log, verboseDeprecated,
                 enforceMandatoryWarnings, "deprecated", LintCategory.DEPRECATION);
+        removalHandler = new MandatoryWarningHandler(log, verboseRemoval,
+                enforceMandatoryWarnings, "removal", LintCategory.REMOVAL);
         uncheckedHandler = new MandatoryWarningHandler(log, verboseUnchecked,
                 enforceMandatoryWarnings, "unchecked", LintCategory.UNCHECKED);
         sunApiHandler = new MandatoryWarningHandler(log, false,
@@ -182,6 +188,10 @@ public class Check {
      */
     private MandatoryWarningHandler deprecationHandler;
 
+    /** A handler for messages about deprecated-for-removal usage.
+     */
+    private MandatoryWarningHandler removalHandler;
+
     /** A handler for messages about unchecked or unsafe usage.
      */
     private MandatoryWarningHandler uncheckedHandler;
@@ -215,8 +225,13 @@ public class Check {
      *  @param sym        The deprecated symbol.
      */
     void warnDeprecated(DiagnosticPosition pos, Symbol sym) {
-        if (!lint.isSuppressed(LintCategory.DEPRECATION))
+        if (sym.isDeprecatedForRemoval()) {
+            if (!lint.isSuppressed(LintCategory.REMOVAL)) {
+                removalHandler.report(pos, "has.been.deprecated.for.removal", sym, sym.location());
+            }
+        } else if (!lint.isSuppressed(LintCategory.DEPRECATION)) {
             deprecationHandler.report(pos, "has.been.deprecated", sym, sym.location());
+        }
     }
 
     /** Warn about unchecked operation.
@@ -254,6 +269,7 @@ public class Check {
      */
     public void reportDeferredDiagnostics() {
         deprecationHandler.reportDeferredDiagnostic();
+        removalHandler.reportDeferredDiagnostic();
         uncheckedHandler.reportDeferredDiagnostic();
         sunApiHandler.reportDeferredDiagnostic();
     }
@@ -789,23 +805,25 @@ public class Check {
         if (!TreeInfo.isDiamond(tree) ||
                 t.isErroneous()) {
             return checkClassType(tree.clazz.pos(), t, true);
-        } else if (tree.def != null && !allowDiamondWithAnonymousClassCreation) {
-            log.error(tree.clazz.pos(),
-                    Errors.CantApplyDiamond1(t, Fragments.DiamondAndAnonClassNotSupportedInSource(source.name)));
-            return types.createErrorType(t);
-        } else if (t.tsym.type.getTypeArguments().isEmpty()) {
-            log.error(tree.clazz.pos(),
-                "cant.apply.diamond.1",
-                t, diags.fragment("diamond.non.generic", t));
-            return types.createErrorType(t);
-        } else if (tree.typeargs != null &&
-                tree.typeargs.nonEmpty()) {
-            log.error(tree.clazz.pos(),
-                "cant.apply.diamond.1",
-                t, diags.fragment("diamond.and.explicit.params", t));
-            return types.createErrorType(t);
         } else {
-            return t;
+            if (tree.def != null && !allowDiamondWithAnonymousClassCreation) {
+                log.error(DiagnosticFlag.SOURCE_LEVEL, tree.clazz.pos(),
+                        Errors.CantApplyDiamond1(t, Fragments.DiamondAndAnonClassNotSupportedInSource(source.name)));
+            }
+            if (t.tsym.type.getTypeArguments().isEmpty()) {
+                log.error(tree.clazz.pos(),
+                    "cant.apply.diamond.1",
+                    t, diags.fragment("diamond.non.generic", t));
+                return types.createErrorType(t);
+            } else if (tree.typeargs != null &&
+                    tree.typeargs.nonEmpty()) {
+                log.error(tree.clazz.pos(),
+                    "cant.apply.diamond.1",
+                    t, diags.fragment("diamond.and.explicit.params", t));
+                return types.createErrorType(t);
+            } else {
+                return t;
+            }
         }
     }
 
@@ -1152,10 +1170,6 @@ public class Check {
         case TYP:
             if (sym.isLocal()) {
                 mask = LocalClassFlags;
-                if (sym.name.isEmpty()) { // Anonymous class
-                    // JLS: Anonymous classes are final.
-                    implicit |= FINAL;
-                }
                 if ((sym.owner.flags_field & STATIC) == 0 &&
                     (flags & ENUM) != 0)
                     log.error(pos, "enums.must.be.static");
@@ -2604,8 +2618,11 @@ public class Check {
         }
     }
 
-    void checkElemAccessFromSerializableLambda(final JCTree tree) {
-        if (warnOnAccessToSensitiveMembers) {
+    void checkAccessFromSerializableElement(final JCTree tree, boolean isLambda) {
+        if (warnOnAnyAccessToMembers ||
+            (lint.isEnabled(LintCategory.SERIAL) &&
+            !lint.isSuppressed(LintCategory.SERIAL) &&
+            isLambda)) {
             Symbol sym = TreeInfo.symbol(tree);
             if (!sym.kind.matches(KindSelector.VAL_MTH)) {
                 return;
@@ -2621,9 +2638,16 @@ public class Check {
             }
 
             if (!types.isSubtype(sym.owner.type, syms.serializableType) &&
-                    isEffectivelyNonPublic(sym)) {
-                log.warning(tree.pos(),
-                        "access.to.sensitive.member.from.serializable.element", sym);
+                isEffectivelyNonPublic(sym)) {
+                if (isLambda) {
+                    if (belongsToRestrictedPackage(sym)) {
+                        log.warning(LintCategory.SERIAL, tree.pos(),
+                            "access.to.member.from.serializable.lambda", sym);
+                    }
+                } else {
+                    log.warning(tree.pos(),
+                        "access.to.member.from.serializable.element", sym);
+                }
             }
         }
     }
@@ -2640,6 +2664,14 @@ public class Check {
             sym = sym.owner;
         }
         return false;
+    }
+
+    private boolean belongsToRestrictedPackage(Symbol sym) {
+        String fullName = sym.packge().fullname.toString();
+        return fullName.startsWith("java.") ||
+                fullName.startsWith("javax.") ||
+                fullName.startsWith("sun.") ||
+                fullName.contains(".internal.");
     }
 
     /** Report a conflict between a user symbol and a synthetic symbol.
@@ -3194,19 +3226,26 @@ public class Check {
     }
 
     void checkDeprecatedAnnotation(DiagnosticPosition pos, Symbol s) {
-        if (lint.isEnabled(LintCategory.DEP_ANN) &&
+        if (lint.isEnabled(LintCategory.DEP_ANN) && s.isDeprecatableViaAnnotation() &&
             (s.flags() & DEPRECATED) != 0 &&
             !syms.deprecatedType.isErroneous() &&
             s.attribute(syms.deprecatedType.tsym) == null) {
             log.warning(LintCategory.DEP_ANN,
                     pos, "missing.deprecated.annotation");
         }
+        // Note: @Deprecated has no effect on local variables, parameters and package decls.
+        if (lint.isEnabled(LintCategory.DEPRECATION) && !s.isDeprecatableViaAnnotation()) {
+            if (!syms.deprecatedType.isErroneous() && s.attribute(syms.deprecatedType.tsym) != null) {
+                log.warning(LintCategory.DEPRECATION, pos,
+                        "deprecated.annotation.has.no.effect", Kinds.kindName(s));
+            }
+        }
     }
 
     void checkDeprecated(final DiagnosticPosition pos, final Symbol other, final Symbol s) {
-        if ((s.flags() & DEPRECATED) != 0 &&
-                (other.flags() & DEPRECATED) == 0 &&
-                s.outermostClass() != other.outermostClass()) {
+        if ( (s.isDeprecatedForRemoval()
+                || s.isDeprecated() && !other.isDeprecated())
+              && s.outermostClass() != other.outermostClass()) {
             deferredLintHandler.report(new DeferredLintHandler.LintLogger() {
                 @Override
                 public void report() {
@@ -3656,4 +3695,178 @@ public class Check {
         }
     }
 
+    public void checkLeaksNotAccessible(Env<AttrContext> env, JCClassDecl check) {
+        JCCompilationUnit toplevel = env.toplevel;
+
+        if (   toplevel.modle == syms.unnamedModule
+            || toplevel.modle == syms.noModule
+            || (check.sym.flags() & COMPOUND) != 0) {
+            return ;
+        }
+
+        ExportsDirective currentExport = findExport(toplevel.packge);
+
+        if (   currentExport == null //not exported
+            || currentExport.modules != null) //don't check classes in qualified export
+            return ;
+
+        new TreeScanner() {
+            Lint lint = env.info.lint;
+            boolean inSuperType;
+
+            @Override
+            public void visitBlock(JCBlock tree) {
+            }
+            @Override
+            public void visitMethodDef(JCMethodDecl tree) {
+                if (!isAPISymbol(tree.sym))
+                    return;
+                Lint prevLint = lint;
+                try {
+                    lint = lint.augment(tree.sym);
+                    if (lint.isEnabled(LintCategory.EXPORTS)) {
+                        super.visitMethodDef(tree);
+                    }
+                } finally {
+                    lint = prevLint;
+                }
+            }
+            @Override
+            public void visitVarDef(JCVariableDecl tree) {
+                if (!isAPISymbol(tree.sym) && tree.sym.owner.kind != MTH)
+                    return;
+                Lint prevLint = lint;
+                try {
+                    lint = lint.augment(tree.sym);
+                    if (lint.isEnabled(LintCategory.EXPORTS)) {
+                        scan(tree.mods);
+                        scan(tree.vartype);
+                    }
+                } finally {
+                    lint = prevLint;
+                }
+            }
+            @Override
+            public void visitClassDef(JCClassDecl tree) {
+                if (tree != check)
+                    return ;
+
+                if (!isAPISymbol(tree.sym))
+                    return ;
+
+                Lint prevLint = lint;
+                try {
+                    lint = lint.augment(tree.sym);
+                    if (lint.isEnabled(LintCategory.EXPORTS)) {
+                        scan(tree.mods);
+                        scan(tree.typarams);
+                        try {
+                            inSuperType = true;
+                            scan(tree.extending);
+                            scan(tree.implementing);
+                        } finally {
+                            inSuperType = false;
+                        }
+                        scan(tree.defs);
+                    }
+                } finally {
+                    lint = prevLint;
+                }
+            }
+            @Override
+            public void visitTypeApply(JCTypeApply tree) {
+                scan(tree.clazz);
+                boolean oldInSuperType = inSuperType;
+                try {
+                    inSuperType = false;
+                    scan(tree.arguments);
+                } finally {
+                    inSuperType = oldInSuperType;
+                }
+            }
+            @Override
+            public void visitIdent(JCIdent tree) {
+                Symbol sym = TreeInfo.symbol(tree);
+                if (sym.kind == TYP && !sym.type.hasTag(TYPEVAR)) {
+                    checkVisible(tree.pos(), sym, toplevel.packge, inSuperType);
+                }
+            }
+
+            @Override
+            public void visitSelect(JCFieldAccess tree) {
+                Symbol sym = TreeInfo.symbol(tree);
+                Symbol sitesym = TreeInfo.symbol(tree.selected);
+                if (sym.kind == TYP && sitesym.kind == PCK) {
+                    checkVisible(tree.pos(), sym, toplevel.packge, inSuperType);
+                } else {
+                    super.visitSelect(tree);
+                }
+            }
+
+            @Override
+            public void visitAnnotation(JCAnnotation tree) {
+                if (tree.attribute.type.tsym.getAnnotation(java.lang.annotation.Documented.class) != null)
+                    super.visitAnnotation(tree);
+            }
+
+        }.scan(check);
+    }
+        //where:
+        private ExportsDirective findExport(PackageSymbol pack) {
+            for (ExportsDirective d : pack.modle.exports) {
+                if (d.packge == pack)
+                    return d;
+            }
+
+            return null;
+        }
+        private boolean isAPISymbol(Symbol sym) {
+            while (sym.kind != PCK) {
+                if ((sym.flags() & Flags.PUBLIC) == 0 && (sym.flags() & Flags.PROTECTED) == 0) {
+                    return false;
+                }
+                sym = sym.owner;
+            }
+            return true;
+        }
+        private void checkVisible(DiagnosticPosition pos, Symbol what, PackageSymbol inPackage, boolean inSuperType) {
+            if (!isAPISymbol(what) && !inSuperType) { //package private/private element
+                log.warning(LintCategory.EXPORTS, pos, Warnings.LeaksNotAccessible(kindName(what), what, what.packge().modle));
+                return ;
+            }
+
+            PackageSymbol whatPackage = what.packge();
+            ExportsDirective whatExport = findExport(whatPackage);
+            ExportsDirective inExport = findExport(inPackage);
+
+            if (whatExport == null) { //package not exported:
+                log.warning(LintCategory.EXPORTS, pos, Warnings.LeaksNotAccessibleUnexported(kindName(what), what, what.packge().modle));
+                return ;
+            }
+
+            if (whatExport.modules != null) {
+                if (inExport.modules == null || !whatExport.modules.containsAll(inExport.modules)) {
+                    log.warning(LintCategory.EXPORTS, pos, Warnings.LeaksNotAccessibleUnexportedQualified(kindName(what), what, what.packge().modle));
+                }
+            }
+
+            if (whatPackage.modle != inPackage.modle && whatPackage.modle != syms.java_base) {
+                //check that relativeTo.modle requires public what.modle, somehow:
+                List<ModuleSymbol> todo = List.of(inPackage.modle);
+
+                while (todo.nonEmpty()) {
+                    ModuleSymbol current = todo.head;
+                    todo = todo.tail;
+                    if (current == whatPackage.modle)
+                        return ; //OK
+                    for (RequiresDirective req : current.requires) {
+                        if (req.isPublic()) {
+                            todo = todo.prepend(req.module);
+                        }
+                    }
+                }
+
+                log.warning(LintCategory.EXPORTS, pos, Warnings.LeaksNotAccessibleNotRequiredPublic(kindName(what), what, what.packge().modle));
+            }
+        }
 }

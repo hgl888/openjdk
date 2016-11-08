@@ -34,7 +34,7 @@
 #include "memory/filemap.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/oop.inline.hpp"
-#include "runtime/atomic.inline.hpp"
+#include "runtime/atomic.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "utilities/hashtable.inline.hpp"
 #include "utilities/macros.hpp"
@@ -740,7 +740,8 @@ void StringTable::serialize(SerializeClosure* soc, GrowableArray<MemRegion> *str
     } else {
       int num_buckets = the_table()->number_of_entries() /
                              SharedSymbolTableBucketSize;
-      CompactStringTableWriter writer(num_buckets,
+      // calculation of num_buckets can result in zero buckets, we need at least one
+      CompactStringTableWriter writer(num_buckets > 1 ? num_buckets : 1,
                                       &MetaspaceShared::stats()->string);
 
       // Copy the interned strings into the "string space" within the java heap

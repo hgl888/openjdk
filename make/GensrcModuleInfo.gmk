@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -95,6 +95,7 @@ ifneq ($(MOD_FILES), )
       $(strip $(wildcard $(addsuffix $(subst .,/,/$(strip $1)), \
           $(MODULE_CLASSES_DIRS) \
           $(addsuffix /$(MODULE), $(IMPORT_MODULES_CLASSES)) \
+          $(JDK_OUTPUTDIR)/modules/$(MODULE) \
       )))
 
   # Convert the modification lines into arguments for the modification tool.

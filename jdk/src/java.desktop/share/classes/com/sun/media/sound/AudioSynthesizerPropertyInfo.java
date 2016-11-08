@@ -22,6 +22,7 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
+
 package com.sun.media.sound;
 
 /**
@@ -32,7 +33,7 @@ package com.sun.media.sound;
 public final class AudioSynthesizerPropertyInfo {
 
     /**
-     * Constructs a {@code AudioSynthesizerPropertyInfo} object with a given
+     * Constructs an {@code AudioSynthesizerPropertyInfo} object with a given
      * name and value. The {@code description} and {@code choices}
      * are initialized by {@code null} values.
      *

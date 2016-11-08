@@ -20,7 +20,9 @@
  *
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
+ * questions.
  */
+
 package java.net.http;
 
 import java.io.IOException;
@@ -128,6 +130,7 @@ class PlainHttpConnection extends HttpConnection implements AsyncConnection {
             this.chan = SocketChannel.open();
             int bufsize = client.getReceiveBufferSize();
             chan.setOption(StandardSocketOptions.SO_RCVBUF, bufsize);
+            chan.setOption(StandardSocketOptions.TCP_NODELAY, true);
         } catch (IOException e) {
             throw new InternalError(e);
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,6 +22,7 @@
  */
 /*
  * @test
+ * @key headful
  * @bug 6635805 6653780 6667607
  * @summary Tests that the resource sharing layer API is not broken
  * @author Dmitri.Trembovetski@sun.com: area=Graphics
@@ -46,7 +47,6 @@ import sun.java2d.DestSurfaceProvider;
 import sun.java2d.Surface;
 import sun.java2d.pipe.BufferedContext;
 import sun.java2d.pipe.RenderQueue;
-import sun.java2d.pipe.hw.AccelDeviceEventListener;
 import sun.java2d.pipe.hw.AccelGraphicsConfig;
 import sun.java2d.pipe.hw.AccelSurface;
 import static java.awt.Transparency.*;
@@ -253,16 +253,6 @@ public class RSLAPITest {
 
     private static void testContext(final AccelGraphicsConfig agc) {
         BufferedContext c = agc.getContext();
-        final AccelDeviceEventListener l = new AccelDeviceEventListener() {
-            public void onDeviceDispose() {
-                System.out.println("onDeviceDispose invoked");
-                agc.removeDeviceEventListener(this);
-            }
-            public void onDeviceReset() {
-                System.out.println("onDeviceReset invoked");
-            }
-        };
-        agc.addDeviceEventListener(l);
 
         RenderQueue rq = c.getRenderQueue();
         rq.lock();

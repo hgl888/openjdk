@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "classfile/vmSymbols.hpp"
+#include "compiler/compilerDirectives.hpp"
 #include "memory/oopFactory.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/handles.inline.hpp"
@@ -354,6 +355,8 @@ bool vmIntrinsics::preserves_state(vmIntrinsics::ID id) {
   case vmIntrinsics::_updateBytesCRC32:
   case vmIntrinsics::_updateByteBufferCRC32:
   case vmIntrinsics::_vectorizedMismatch:
+  case vmIntrinsics::_fmaD:
+  case vmIntrinsics::_fmaF:
     return true;
   default:
     return false;
@@ -365,6 +368,7 @@ bool vmIntrinsics::can_trap(vmIntrinsics::ID id) {
   switch(id) {
 #ifdef TRACE_HAVE_INTRINSICS
   case vmIntrinsics::_counterTime:
+  case vmIntrinsics::_getClassId:
 #endif
   case vmIntrinsics::_currentTimeMillis:
   case vmIntrinsics::_nanoTime:
@@ -386,6 +390,8 @@ bool vmIntrinsics::can_trap(vmIntrinsics::ID id) {
   case vmIntrinsics::_updateBytesCRC32:
   case vmIntrinsics::_updateByteBufferCRC32:
   case vmIntrinsics::_vectorizedMismatch:
+  case vmIntrinsics::_fmaD:
+  case vmIntrinsics::_fmaF:
     return false;
   default:
     return true;
@@ -418,8 +424,42 @@ int vmIntrinsics::predicates_needed(vmIntrinsics::ID id) {
   }
 }
 
+bool vmIntrinsics::is_intrinsic_available(vmIntrinsics::ID id) {
+  return !vmIntrinsics::is_intrinsic_disabled(id) &&
+    !vmIntrinsics::is_disabled_by_flags(id);
+}
+
+bool vmIntrinsics::is_intrinsic_disabled(vmIntrinsics::ID id) {
+  assert(id != vmIntrinsics::_none, "must be a VM intrinsic");
+
+  // Canonicalize DisableIntrinsic to contain only ',' as a separator.
+  // Note, DirectiveSet may not be created at this point yet since this code
+  // is called from initial stub geenration code.
+  char* local_list = (char*)DirectiveSet::canonicalize_disableintrinsic(DisableIntrinsic);
+
+  bool found = false;
+  char* token = strtok(local_list, ",");
+  while (token != NULL) {
+    if (strcmp(token, vmIntrinsics::name_at(id)) == 0) {
+      found = true;
+      break;
+    } else {
+      token = strtok(NULL, ",");
+    }
+  }
+
+  FREE_C_HEAP_ARRAY(char, local_list);
+  return found;
+}
+
+
 bool vmIntrinsics::is_disabled_by_flags(const methodHandle& method) {
   vmIntrinsics::ID id = method->intrinsic_id();
+  assert(id != vmIntrinsics::_none, "must be a VM intrinsic");
+  return is_disabled_by_flags(id);
+}
+
+bool vmIntrinsics::is_disabled_by_flags(vmIntrinsics::ID id) {
   assert(id != vmIntrinsics::_none, "must be a VM intrinsic");
 
   // -XX:-InlineNatives disables nearly all intrinsics except the ones listed in
@@ -499,6 +539,10 @@ bool vmIntrinsics::is_disabled_by_flags(const methodHandle& method) {
   case vmIntrinsics::_floatToIntBits:
   case vmIntrinsics::_doubleToLongBits:
     if (!InlineMathNatives) return true;
+    break;
+  case vmIntrinsics::_fmaD:
+  case vmIntrinsics::_fmaF:
+    if (!InlineMathNatives || !UseFMA) return true;
     break;
   case vmIntrinsics::_arraycopy:
     if (!InlineArrayCopy) return true;

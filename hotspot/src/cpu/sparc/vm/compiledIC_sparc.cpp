@@ -77,8 +77,7 @@ int CompiledStaticCall::to_interp_stub_size() {
   // This doesn't need to be accurate but it must be larger or equal to
   // the real size of the stub.
   return (NativeMovConstReg::instruction_size +  // sethi/setlo;
-          NativeJump::instruction_size + // sethi; jmp; nop
-          (TraceJumps ? 20 * BytesPerInstWord : 0) );
+          NativeJump::instruction_size); // sethi; jmp; nop
 }
 
 // Relocation entries for call stub, compiled java to interpreter.
@@ -101,10 +100,15 @@ void CompiledStaticCall::set_to_interpreted(methodHandle callee, address entry) 
   NativeMovConstReg* method_holder = nativeMovConstReg_at(stub);
   NativeJump*        jump          = nativeJump_at(method_holder->next_instruction_address());
 
-  assert(method_holder->data() == 0 || method_holder->data() == (intptr_t)callee(),
+#ifdef ASSERT
+  // read the value once
+  intptr_t data = method_holder->data();
+  address destination = jump->jump_destination();
+  assert(data == 0 || data == (intptr_t)callee(),
          "a) MT-unsafe modification of inline cache");
-  assert(jump->jump_destination() == (address)-1 || jump->jump_destination() == entry,
+  assert(destination == (address)-1 || destination == entry,
          "b) MT-unsafe modification of inline cache");
+#endif
 
   // Update stub.
   method_holder->set_data((intptr_t)callee());

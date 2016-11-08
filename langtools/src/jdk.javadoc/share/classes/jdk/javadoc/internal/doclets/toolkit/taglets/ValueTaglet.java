@@ -34,6 +34,7 @@ import javax.lang.model.util.Elements;
 import com.sun.source.doctree.DocTree;
 import jdk.javadoc.internal.doclets.toolkit.Configuration;
 import jdk.javadoc.internal.doclets.toolkit.Content;
+import jdk.javadoc.internal.doclets.toolkit.Messages;
 import jdk.javadoc.internal.doclets.toolkit.util.CommentHelper;
 import jdk.javadoc.internal.doclets.toolkit.util.Utils;
 
@@ -90,6 +91,15 @@ public class ValueTaglet extends BaseInlineTaglet {
      */
     public boolean inOverview() {
         return true;
+    }
+
+    /**
+     * Will return false because this inline tag may
+     * only appear in Fields.
+     * @return false since this is not a field.
+     */
+    public boolean inModule() {
+        return false;
     }
 
     /**
@@ -152,7 +162,7 @@ public class ValueTaglet extends BaseInlineTaglet {
             memberName = sigValues[0];
         } else {
             //Case 3: @value in different class.
-            Elements elements = config.root.getElementUtils();
+            Elements elements = config.docEnv.getElementUtils();
             te = elements.getTypeElement(sigValues[0]);
             memberName = sigValues[1];
         }
@@ -172,15 +182,16 @@ public class ValueTaglet extends BaseInlineTaglet {
      */
     public Content getTagletOutput(Element holder, DocTree tag, TagletWriter writer) {
         Utils utils = writer.configuration().utils;
+        Messages messages = writer.configuration().getMessages();
         VariableElement field = getVariableElement(holder, writer.configuration(), tag);
         if (field == null) {
             if (tag.toString().isEmpty()) {
                 //Invalid use of @value
-                writer.getMsgRetriever().warning(holder,
+                messages.warning(holder,
                         "doclet.value_tag_invalid_use");
             } else {
                 //Reference is unknown.
-                writer.getMsgRetriever().warning(holder,
+                messages.warning(holder,
                         "doclet.value_tag_invalid_reference", tag.toString());
             }
         } else if (field.getConstantValue() != null) {
@@ -193,7 +204,7 @@ public class ValueTaglet extends BaseInlineTaglet {
             );
         } else {
             //Referenced field is not a constant.
-            writer.getMsgRetriever().warning(holder,
+            messages.warning(holder,
                 "doclet.value_tag_invalid_constant", utils.getSimpleName(field));
         }
         return writer.getOutputInstance();

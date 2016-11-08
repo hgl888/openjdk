@@ -449,7 +449,6 @@ ResourceBitMap ciMethod::live_local_oops_at_bci(int bci) {
   OopMapCache::compute_one_oop_map(get_Method(), bci, &mask);
   int mask_size = max_locals();
   ResourceBitMap result(mask_size);
-  result.clear();
   int i;
   for (i = 0; i < mask_size ; i++ ) {
     if (mask.is_oop(i)) result.set_bit(i);
@@ -789,7 +788,8 @@ ciMethod* ciMethod::resolve_invoke(ciKlass* caller, ciKlass* exact_receiver, boo
    Symbol* h_name      = name()->get_symbol();
    Symbol* h_signature = signature()->get_symbol();
 
-   LinkInfo link_info(h_resolved, h_name, h_signature, caller_klass, check_access);
+   LinkInfo link_info(h_resolved, h_name, h_signature, caller_klass,
+                      check_access ? LinkInfo::needs_access_check : LinkInfo::skip_access_check);
    methodHandle m;
    // Only do exact lookup if receiver klass has been linked.  Otherwise,
    // the vtable has not been setup, and the LinkResolver will fail.
@@ -1410,11 +1410,11 @@ void ciMethod::print_impl(outputStream* st) {
 }
 
 #if INCLUDE_TRACE
-TraceStructCiMethod ciMethod::to_trace_struct() const {
-  TraceStructCiMethod result;
-  result.set_class(holder()->name()->as_utf8());
+TraceStructCalleeMethod ciMethod::to_trace_struct() const {
+  TraceStructCalleeMethod result;
+  result.set_type(holder()->name()->as_utf8());
   result.set_name(name()->as_utf8());
-  result.set_signature(signature()->as_symbol()->as_utf8());
+  result.set_descriptor(signature()->as_symbol()->as_utf8());
   return result;
 }
 #endif

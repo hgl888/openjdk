@@ -24,7 +24,7 @@
 
 /* @test
  * @summary a jtreg wrapper for gtest tests
- * @library /test/lib/share/classes
+ * @library /test/lib
  * @modules java.base/jdk.internal.misc
  * @run main/native GTestWrapper
  */
@@ -61,14 +61,11 @@ public class GTestWrapper {
             throw new Error("TESTBUG: the library has not been found in " + nativePath);
         }
         path = path.resolve("gtestLauncher" + (Platform.isWindows() ? ".exe" : ""));
-        Stream<String> launcherArgs = Stream.of(path.toString(), "-jdk",
-                System.getProperty("test.jdk"));
-        // JVM accepts only -X and -D flags
-        Stream<String> vmFLags = Arrays.stream(Utils.getTestJavaOpts())
-                                       .filter(s -> s.startsWith("-X") || s.startsWith("-D"));
-        String[] cmds = Stream.concat(launcherArgs, vmFLags)
-                              .toArray(String[]::new);
-        ProcessTools.executeCommand(cmds).shouldHaveExitValue(0);
+        ProcessTools.executeCommand(new String[] {
+                path.toString(),
+                "-jdk",
+                System.getProperty("test.jdk")
+        }).shouldHaveExitValue(0);
     }
 
     private static String getJVMVariantSubDir() {

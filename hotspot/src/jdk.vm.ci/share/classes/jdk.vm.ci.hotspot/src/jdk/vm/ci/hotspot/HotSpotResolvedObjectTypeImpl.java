@@ -24,7 +24,9 @@ package jdk.vm.ci.hotspot;
 
 import static java.util.Objects.requireNonNull;
 import static jdk.vm.ci.hotspot.CompilerToVM.compilerToVM;
+import static jdk.vm.ci.hotspot.HotSpotConstantPool.isSignaturePolymorphicHolder;
 import static jdk.vm.ci.hotspot.HotSpotJVMCIRuntime.runtime;
+import static jdk.vm.ci.hotspot.HotSpotModifiers.jvmClassModifiers;
 import static jdk.vm.ci.hotspot.HotSpotVMConfig.config;
 import static jdk.vm.ci.hotspot.UnsafeAccess.UNSAFE;
 
@@ -48,16 +50,14 @@ import jdk.vm.ci.meta.Constant;
 import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.JavaType;
-import jdk.vm.ci.meta.ModifiersProvider;
 import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
-import jdk.vm.ci.meta.TrustedInterface;
 
 /**
  * Implementation of {@link JavaType} for resolved non-primitive HotSpot classes.
  */
-final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implements HotSpotResolvedObjectType, HotSpotProxified, MetaspaceWrapperObject {
+final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implements HotSpotResolvedObjectType, MetaspaceWrapperObject {
 
     /**
      * The Java class this type represents.
@@ -128,13 +128,23 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
      */
     long getMetaspaceKlass() {
         if (HotSpotJVMCIRuntime.getHostWordKind() == JavaKind.Long) {
-            return UNSAFE.getLong(javaClass, (long) config().klassOffset);
+            return UNSAFE.getLong(javaClass, config().klassOffset);
         }
-        return UNSAFE.getInt(javaClass, (long) config().klassOffset) & 0xFFFFFFFFL;
+        return UNSAFE.getInt(javaClass, config().klassOffset) & 0xFFFFFFFFL;
     }
 
+    @Override
     public long getMetaspacePointer() {
         return getMetaspaceKlass();
+    }
+
+    /**
+     * The Klass* for this object is kept alive by the direct reference to {@link #javaClass} so no
+     * extra work is required.
+     */
+    @Override
+    public boolean isRegistered() {
+        return true;
     }
 
     @Override
@@ -142,7 +152,7 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
         if (isArray()) {
             return (getElementalType().getModifiers() & (Modifier.PUBLIC | Modifier.PRIVATE | Modifier.PROTECTED)) | Modifier.FINAL | Modifier.ABSTRACT;
         } else {
-            return getAccessFlags() & ModifiersProvider.jvmClassModifiers();
+            return getAccessFlags() & jvmClassModifiers();
         }
     }
 
@@ -167,9 +177,25 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
 
     @Override
     public AssumptionResult<ResolvedJavaType> findLeafConcreteSubtype() {
+        if (isLeaf()) {
+            // No assumptions are required.
+            return new AssumptionResult<>(this);
+        }
         HotSpotVMConfig config = config();
         if (isArray()) {
-            return getElementalType().isLeaf() ? new AssumptionResult<>(this) : null;
+            ResolvedJavaType elementalType = getElementalType();
+            AssumptionResult<ResolvedJavaType> elementType = elementalType.findLeafConcreteSubtype();
+            if (elementType != null && elementType.getResult().equals(elementalType)) {
+                /*
+                 * If the elementType is leaf then the array is leaf under the same assumptions but
+                 * only if the element type is exactly the leaf type. The element type can be
+                 * abstract even if there is only one implementor of the abstract type.
+                 */
+                AssumptionResult<ResolvedJavaType> result = new AssumptionResult<>(this);
+                result.add(elementType);
+                return result;
+            }
+            return null;
         } else if (isInterface()) {
             HotSpotResolvedObjectTypeImpl implementor = getSingleImplementor();
             /*
@@ -192,8 +218,7 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
                 }
                 return null;
             }
-
-            return new AssumptionResult<>(implementor, new LeafType(implementor), new ConcreteSubtype(this, implementor));
+            return concreteSubtype(implementor);
         } else {
             HotSpotResolvedObjectTypeImpl type = this;
             while (type.isAbstract()) {
@@ -207,11 +232,19 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
                 return null;
             }
             if (this.isAbstract()) {
-                return new AssumptionResult<>(type, new LeafType(type), new ConcreteSubtype(this, type));
+                return concreteSubtype(type);
             } else {
                 assert this.equals(type);
                 return new AssumptionResult<>(type, new LeafType(type));
             }
+        }
+    }
+
+    private AssumptionResult<ResolvedJavaType> concreteSubtype(HotSpotResolvedObjectTypeImpl type) {
+        if (type.isLeaf()) {
+            return new AssumptionResult<>(type, new ConcreteSubtype(this, type));
+        } else {
+            return new AssumptionResult<>(type, new LeafType(type), new ConcreteSubtype(this, type));
         }
     }
 
@@ -294,11 +327,6 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
                 t2 = t2.getSupertype();
             }
         }
-    }
-
-    @Override
-    public HotSpotResolvedObjectType asExactType() {
-        return isLeaf() ? this : null;
     }
 
     @Override
@@ -399,7 +427,7 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
             // Methods can only be resolved against concrete types
             return null;
         }
-        if (method.isConcrete() && method.getDeclaringClass().equals(this) && method.isPublic()) {
+        if (method.isConcrete() && method.getDeclaringClass().equals(this) && method.isPublic() && !isSignaturePolymorphicHolder(method.getDeclaringClass())) {
             return method;
         }
         if (!method.getDeclaringClass().isAssignableFrom(this)) {
@@ -411,8 +439,14 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
     }
 
     public HotSpotConstantPool getConstantPool() {
-        if (constantPool == null) {
-            constantPool = compilerToVM().getConstantPool(this, config().instanceKlassConstantsOffset);
+        if (constantPool == null || !isArray() && UNSAFE.getAddress(getMetaspaceKlass() + config().instanceKlassConstantsOffset) != constantPool.getMetaspaceConstantPool()) {
+            /*
+             * If the pointer to the ConstantPool has changed since this was last read refresh the
+             * HotSpotConstantPool wrapper object. This ensures that uses of the constant pool are
+             * operating on the latest one and that HotSpotResolvedJavaMethodImpls will be able to
+             * use the shared copy instead of creating their own instance.
+             */
+            constantPool = compilerToVM().getConstantPool(this);
         }
         return constantPool;
     }
@@ -470,10 +504,10 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
         return result;
     }
 
-    public synchronized HotSpotResolvedJavaField createField(String fieldName, JavaType type, long offset, int rawFlags) {
+    synchronized HotSpotResolvedJavaField createField(String fieldName, JavaType type, long offset, int rawFlags) {
         HotSpotResolvedJavaField result = null;
 
-        final int flags = rawFlags & ModifiersProvider.jvmFieldModifiers();
+        final int flags = rawFlags & HotSpotModifiers.jvmFieldModifiers();
 
         final long id = offset + ((long) flags << 32);
 
@@ -490,7 +524,12 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
             fieldCache.put(id, result);
         } else {
             assert result.getName().equals(fieldName);
-            // assert result.getType().equals(type);
+            /*
+             * Comparing the types directly is too strict, because the type in the cache could be
+             * resolved while the incoming type is unresolved. The name comparison is sufficient
+             * because the type will always be resolved in the context of the holder.
+             */
+            assert result.getType().getName().equals(type.getName());
             assert result.offset() == offset;
             assert result.getModifiers() == flags;
         }
@@ -553,7 +592,8 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
             // Get Klass::_fields
             final long metaspaceFields = UNSAFE.getAddress(getMetaspaceKlass() + config.instanceKlassFieldsOffset);
             assert config.fieldInfoFieldSlots == 6 : "revisit the field parsing code";
-            metaspaceData = metaspaceFields + config.arrayU2DataOffset + config.fieldInfoFieldSlots * Short.BYTES * index;
+            int offset = config.fieldInfoFieldSlots * Short.BYTES * index;
+            metaspaceData = metaspaceFields + config.arrayU2DataOffset + offset;
         }
 
         private int getAccessFlags() {
@@ -581,7 +621,8 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
          * on top an array of Java shorts.
          */
         private int readFieldSlot(int index) {
-            return UNSAFE.getChar(metaspaceData + Short.BYTES * index);
+            int offset = Short.BYTES * index;
+            return UNSAFE.getChar(metaspaceData + offset);
         }
 
         /**
@@ -590,7 +631,7 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
          */
         public String getName() {
             final int nameIndex = getNameIndex();
-            return isInternal() ? HotSpotVmSymbols.symbolAt(nameIndex) : getConstantPool().lookupUtf8(nameIndex);
+            return isInternal() ? config().symbolAt(nameIndex) : getConstantPool().lookupUtf8(nameIndex);
         }
 
         /**
@@ -599,7 +640,7 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
          */
         public String getSignature() {
             final int signatureIndex = getSignatureIndex();
-            return isInternal() ? HotSpotVmSymbols.symbolAt(signatureIndex) : getConstantPool().lookupUtf8(signatureIndex);
+            return isInternal() ? config().symbolAt(signatureIndex) : getConstantPool().lookupUtf8(signatureIndex);
         }
 
         public JavaType getType() {
@@ -620,6 +661,7 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
         }
     }
 
+    @SuppressFBWarnings(value = "SE_COMPARATOR_SHOULD_BE_SERIALIZABLE", justification = "comparator is only used transiently")
     private static class OffsetComparator implements java.util.Comparator<HotSpotResolvedJavaField> {
         @Override
         public int compare(HotSpotResolvedJavaField o1, HotSpotResolvedJavaField o2) {
@@ -742,6 +784,11 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
     @Override
     public Annotation[] getAnnotations() {
         return mirror().getAnnotations();
+    }
+
+    @Override
+    public Annotation[] getDeclaredAnnotations() {
+        return mirror().getDeclaredAnnotations();
     }
 
     @Override
@@ -876,11 +923,6 @@ final class HotSpotResolvedObjectTypeImpl extends HotSpotResolvedJavaType implem
     @Override
     public String toString() {
         return "HotSpotType<" + getName() + ", resolved>";
-    }
-
-    @Override
-    public boolean isTrustedInterfaceType() {
-        return TrustedInterface.class.isAssignableFrom(mirror());
     }
 
     @Override

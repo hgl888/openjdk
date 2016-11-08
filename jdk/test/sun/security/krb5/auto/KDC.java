@@ -219,8 +219,10 @@ public class KDC {
     };
 
     static {
-        String hostsFileName = System.getProperty("test.src", ".") + "/TestHosts";
-        System.setProperty("jdk.net.hosts.file", hostsFileName);
+        if (System.getProperty("jdk.net.hosts.file") == null) {
+            String hostsFileName = System.getProperty("test.src", ".") + "/TestHosts";
+            System.setProperty("jdk.net.hosts.file", hostsFileName);
+        }
     }
 
     /**
@@ -244,7 +246,7 @@ public class KDC {
      * @throws java.io.IOException for any socket creation error
      */
     public static KDC create(String realm) throws IOException {
-        return create(realm, "kdc." + realm.toLowerCase(), 0, true);
+        return create(realm, "kdc." + realm.toLowerCase(Locale.US), 0, true);
     }
 
     public static KDC existing(String realm, String kdc, int port) {

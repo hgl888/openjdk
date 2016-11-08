@@ -23,7 +23,7 @@
 
 /*
  * @test
- * @bug 8153716 8143955 8151754 8150382 8153920 8156910
+ * @bug 8153716 8143955 8151754 8150382 8153920 8156910 8131024 8160089 8153897 8167128
  * @summary Simple jshell tool tests
  * @modules jdk.compiler/com.sun.tools.javac.api
  *          jdk.compiler/com.sun.tools.javac.main
@@ -58,6 +58,16 @@ public class ToolSimpleTest extends ReplToolTesting {
                 (a) -> assertCommand(a, "int v; int c",
                         "v ==> 0\n" +
                         "c ==> 0")
+        );
+    }
+
+    public void testOpenComment() {
+        test(
+                (a) -> assertCommand(a, "int z = /* blah", ""),
+                (a) -> assertCommand(a, "baz */ 5", "z ==> 5"),
+                (a) -> assertCommand(a, "/** hoge ", ""),
+                (a) -> assertCommand(a, "baz **/", ""),
+                (a) -> assertCommand(a, "int v", "v ==> 0")
         );
     }
 
@@ -147,7 +157,6 @@ public class ToolSimpleTest extends ReplToolTesting {
         );
     }
 
-    @Test(enabled = false) // TODO 8153897
     public void defineUnresolvedVar() {
         test(
                 (a) -> assertCommand(a, "undefined x",
@@ -184,8 +193,8 @@ public class ToolSimpleTest extends ReplToolTesting {
                         "|  '/save' requires a filename argument."),
                 (a) -> assertCommand(a, "/open",
                         "|  '/open' requires a filename argument."),
-                (a) -> assertCommand(a, "/set start",
-                        "|  Specify either one option or a startup file name -- /set start")
+                (a) -> assertCommandOutputStartsWith(a, "/drop",
+                        "|  In the /drop argument, please specify an import, variable, method, or class to drop.")
         );
     }
 
@@ -199,7 +208,7 @@ public class ToolSimpleTest extends ReplToolTesting {
     }
 
     public void testDrop() {
-        test(false, new String[]{"-nostartup"},
+        test(false, new String[]{"--no-startup"},
                 a -> assertVariable(a, "int", "a"),
                 a -> dropVariable(a, "/drop 1", "int a = 0", "|  dropped variable a"),
                 a -> assertMethod(a, "int b() { return 0; }", "()I", "b"),
@@ -208,12 +217,15 @@ public class ToolSimpleTest extends ReplToolTesting {
                 a -> dropClass(a, "/drop 3", "class A", "|  dropped class A"),
                 a -> assertImport(a, "import java.util.stream.*;", "", "java.util.stream.*"),
                 a -> dropImport(a, "/drop 4", "import java.util.stream.*", ""),
+                a -> assertCommand(a, "for (int i = 0; i < 10; ++i) {}", ""),
+                a -> assertCommand(a, "/drop 5", ""),
+                a -> assertCommand(a, "/list", ""),
                 a -> assertCommandCheckOutput(a, "/vars", assertVariables()),
                 a -> assertCommandCheckOutput(a, "/methods", assertMethods()),
                 a -> assertCommandCheckOutput(a, "/types", assertClasses()),
                 a -> assertCommandCheckOutput(a, "/imports", assertImports())
         );
-        test(false, new String[]{"-nostartup"},
+        test(false, new String[]{"--no-startup"},
                 a -> assertVariable(a, "int", "a"),
                 a -> dropVariable(a, "/drop a", "int a = 0", "|  dropped variable a"),
                 a -> assertMethod(a, "int b() { return 0; }", "()I", "b"),
@@ -228,13 +240,14 @@ public class ToolSimpleTest extends ReplToolTesting {
     }
 
     public void testDropNegative() {
-        test(false, new String[]{"-nostartup"},
+        test(false, new String[]{"--no-startup"},
                 a -> assertCommandOutputStartsWith(a, "/drop 0", "|  No such snippet: 0"),
                 a -> assertCommandOutputStartsWith(a, "/drop a", "|  No such snippet: a"),
                 a -> assertCommandCheckOutput(a, "/drop",
                         assertStartsWith("|  In the /drop argument, please specify an import, variable, method, or class to drop.")),
                 a -> assertVariable(a, "int", "a"),
                 a -> assertCommand(a, "a", "a ==> 0"),
+                a -> assertCommand(a, "/drop 2", ""),
                 a -> assertCommand(a, "/drop 2",
                         "|  This command does not accept the snippet '2' : a\n" +
                         "|  See /types, /methods, /vars, or /list")
@@ -452,20 +465,20 @@ public class ToolSimpleTest extends ReplToolTesting {
     }
 
     public void testOptionQ() {
-        test(new String[]{"-q", "-nostartup"},
+        test(new String[]{"-q", "--no-startup"},
                 (a) -> assertCommand(a, "1+1", "$1 ==> 2"),
                 (a) -> assertCommand(a, "int x = 5", "")
         );
     }
 
-    public void testOptionQq() {
-        test(new String[]{"-qq", "-nostartup"},
+    public void testOptionS() {
+        test(new String[]{"-s", "--no-startup"},
                 (a) -> assertCommand(a, "1+1", "")
         );
     }
 
     public void testOptionV() {
-        test(new String[]{"-v", "-nostartup"},
+        test(new String[]{"-v", "--no-startup"},
                 (a) -> assertCommand(a, "1+1",
                         "$1 ==> 2\n" +
                         "|  created scratch variable $1 : int")
@@ -473,14 +486,36 @@ public class ToolSimpleTest extends ReplToolTesting {
     }
 
     public void testOptionFeedback() {
-        test(new String[]{"-feedback", "concise", "-nostartup"},
+        test(new String[]{"--feedback", "concise", "--no-startup"},
                 (a) -> assertCommand(a, "1+1", "$1 ==> 2"),
                 (a) -> assertCommand(a, "int x = 5", "")
         );
     }
 
+    public void testCompoundOptions() {
+        Consumer<String> confirmNoStartup = s -> {
+                    assertEquals(0, Stream.of(s.split("\n"))
+                            .filter(l -> !l.isEmpty())
+                            .count(), "Expected no lines: " + s);
+                };
+        test(new String[]{"-nq"},
+                (a) -> assertCommandCheckOutput(a, "/list -all", confirmNoStartup),
+                (a) -> assertCommand(a, "1+1", "$1 ==> 2"),
+                (a) -> assertCommand(a, "int x = 5", "")
+        );
+        test(new String[]{"-qn"},
+                (a) -> assertCommandCheckOutput(a, "/list -all", confirmNoStartup),
+                (a) -> assertCommand(a, "1+1", "$1 ==> 2"),
+                (a) -> assertCommand(a, "int x = 5", "")
+        );
+        test(new String[]{"-ns"},
+                (a) -> assertCommandCheckOutput(a, "/list -all", confirmNoStartup),
+                (a) -> assertCommand(a, "1+1", "")
+        );
+    }
+
     public void testOptionR() {
-        test(new String[]{"-R-Dthe.sound=blorp", "-nostartup"},
+        test(new String[]{"-R-Dthe.sound=blorp", "--no-startup"},
                 (a) -> assertCommand(a, "System.getProperty(\"the.sound\")",
                         "$1 ==> \"blorp\"")
         );

@@ -33,6 +33,11 @@ private:
   bool _bootstrapping;
 
   /**
+   * True if we have seen a bootstrap compilation request.
+   */
+  volatile bool _bootstrap_compilation_request_handled;
+
+  /**
    * Number of methods successfully compiled by a call to
    * JVMCICompiler::compile_method().
    */
@@ -42,7 +47,10 @@ private:
 
   static elapsedTimer _codeInstallTimer;
 
-  static void abort_on_pending_exception(Handle exception, const char* message, bool dump_core = false);
+  /**
+   * Exits the VM due to an unexpected exception.
+   */
+  static void exit_on_pending_exception(Handle exception, const char* message);
 
 public:
   JVMCICompiler();
@@ -68,7 +76,13 @@ public:
   // Initialization
   virtual void initialize();
 
-  void bootstrap();
+  /**
+   * Initialize the compile queue with the methods in java.lang.Object and
+   * then wait until the queue is empty.
+   */
+  void bootstrap(TRAPS);
+
+  bool is_bootstrapping() const { return _bootstrapping; }
 
   // Compilation entry point for methods
   virtual void compile_method(ciEnv* env, ciMethod* target, int entry_bci, DirectiveSet* directive);

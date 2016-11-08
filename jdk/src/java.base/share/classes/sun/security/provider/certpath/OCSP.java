@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2009, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,6 +35,7 @@ import java.security.cert.CertPathValidatorException;
 import java.security.cert.CertPathValidatorException.BasicReason;
 import java.security.cert.CRLReason;
 import java.security.cert.Extension;
+import java.security.cert.TrustAnchor;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.Collections;
@@ -125,7 +126,7 @@ public final class OCSP {
                 ("Exception while encoding OCSPRequest", e);
         }
         OCSPResponse ocspResponse = check(Collections.singletonList(certId),
-            responderURI, issuerCert, null, null,
+            responderURI, new OCSPResponse.IssuerInfo(issuerCert), null, null,
             Collections.<Extension>emptyList());
         return (RevocationStatus)ocspResponse.getSingleResponse(certId);
     }
@@ -164,6 +165,15 @@ public final class OCSP {
                                          Date date, List<Extension> extensions)
         throws IOException, CertPathValidatorException
     {
+        return check(cert, responderURI, null, issuerCert, responderCert, date, extensions);
+    }
+
+    public static RevocationStatus check(X509Certificate cert,
+            URI responderURI, TrustAnchor anchor, X509Certificate issuerCert,
+            X509Certificate responderCert, Date date,
+            List<Extension> extensions)
+            throws IOException, CertPathValidatorException
+    {
         CertId certId = null;
         try {
             X509CertImpl certImpl = X509CertImpl.toImpl(cert);
@@ -173,7 +183,8 @@ public final class OCSP {
                 ("Exception while encoding OCSPRequest", e);
         }
         OCSPResponse ocspResponse = check(Collections.singletonList(certId),
-            responderURI, issuerCert, responderCert, date, extensions);
+                responderURI, new OCSPResponse.IssuerInfo(anchor, issuerCert),
+                responderCert, date, extensions);
         return (RevocationStatus) ocspResponse.getSingleResponse(certId);
     }
 
@@ -182,7 +193,7 @@ public final class OCSP {
      *
      * @param certIds the CertIds to be checked
      * @param responderURI the URI of the OCSP responder
-     * @param issuerCert the issuer's certificate
+     * @param issuerInfo the issuer's certificate and/or subject and public key
      * @param responderCert the OCSP responder's certificate
      * @param date the time the validity of the OCSP responder's certificate
      *    should be checked against. If null, the current time is used.
@@ -195,8 +206,8 @@ public final class OCSP {
      * @throws CertPathValidatorException if an exception occurs while
      *    encoding the OCSP Request or validating the OCSP Response
      */
-    static OCSPResponse check(List<CertId> certIds, URI responderURI,
-                              X509Certificate issuerCert,
+        static OCSPResponse check(List<CertId> certIds, URI responderURI,
+                              OCSPResponse.IssuerInfo issuerInfo,
                               X509Certificate responderCert, Date date,
                               List<Extension> extensions)
         throws IOException, CertPathValidatorException
@@ -214,7 +225,7 @@ public final class OCSP {
             ocspResponse = new OCSPResponse(response);
 
             // verify the response
-            ocspResponse.verify(certIds, issuerCert, responderCert, date,
+            ocspResponse.verify(certIds, issuerInfo, responderCert, date,
                     nonce);
         } catch (IOException ioe) {
             throw new CertPathValidatorException(

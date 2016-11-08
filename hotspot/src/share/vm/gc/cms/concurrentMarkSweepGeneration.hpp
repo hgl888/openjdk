@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -540,7 +540,7 @@ class CMSCollector: public CHeapObj<mtGC> {
 
   // Overflow list of grey objects, threaded through mark-word
   // Manipulated with CAS in the parallel/multi-threaded case.
-  oop _overflow_list;
+  oopDesc* volatile _overflow_list;
   // The following array-pair keeps track of mark words
   // displaced for accommodating overflow list above.
   // This code will likely be revisited under RFE#4922830.
@@ -724,12 +724,12 @@ class CMSCollector: public CHeapObj<mtGC> {
   // Support for parallelizing young gen rescan in CMS remark phase
   ParNewGeneration* _young_gen;
 
-  HeapWord** _top_addr;    // ... Top of Eden
-  HeapWord** _end_addr;    // ... End of Eden
-  Mutex*     _eden_chunk_lock;
-  HeapWord** _eden_chunk_array; // ... Eden partitioning array
-  size_t     _eden_chunk_index; // ... top (exclusive) of array
-  size_t     _eden_chunk_capacity;  // ... max entries in array
+  HeapWord* volatile* _top_addr;    // ... Top of Eden
+  HeapWord**          _end_addr;    // ... End of Eden
+  Mutex*              _eden_chunk_lock;
+  HeapWord**          _eden_chunk_array; // ... Eden partitioning array
+  size_t              _eden_chunk_index; // ... top (exclusive) of array
+  size_t              _eden_chunk_capacity;  // ... max entries in array
 
   // Support for parallelizing survivor space rescan
   HeapWord** _survivor_chunk_array;
@@ -1501,6 +1501,7 @@ class ScanMarkedObjectsAgainCarefullyClosure: public ObjectClosureCareful {
   CMSBitMap*                     _bitMap;
   CMSMarkStack*                  _markStack;
   MarkRefsIntoAndScanClosure*    _scanningClosure;
+  DEBUG_ONLY(HeapWord*           _last_scanned_object;)
 
  public:
   ScanMarkedObjectsAgainCarefullyClosure(CMSCollector* collector,
@@ -1514,8 +1515,9 @@ class ScanMarkedObjectsAgainCarefullyClosure: public ObjectClosureCareful {
     _yield(should_yield),
     _bitMap(bitMap),
     _markStack(markStack),
-    _scanningClosure(cl) {
-  }
+    _scanningClosure(cl)
+    DEBUG_ONLY(COMMA _last_scanned_object(NULL))
+  { }
 
   void do_object(oop p) {
     guarantee(false, "call do_object_careful instead");

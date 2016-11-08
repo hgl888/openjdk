@@ -20,7 +20,9 @@
  *
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
+ * questions.
  */
+
 package java.net.http;
 
 import java.io.IOException;
@@ -142,6 +144,9 @@ class SSLConnection extends HttpConnection {
         // TODO: check for closure
         String s = "Receive) ";
         //debugPrint(s, r.buf);
+        if (r.result.bytesProduced() > 0) {
+            assert buf == r.buf;
+        }
         return r.result.bytesProduced();
     }
 

@@ -1,24 +1,21 @@
 /*
- * reserved comment block
- * DO NOT REMOVE OR ALTER!
+ * Copyright (c) 2013, 2016, Oracle and/or its affiliates. All rights reserved.
  */
 /*
- * Copyright 2001-2004 The Apache Software Foundation.
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
-/*
- * $Id: ErrorMessages.java,v 1.2.4.1 2005/09/15 09:59:41 pvedula Exp $
  */
 
 package com.sun.org.apache.xalan.internal.xsltc.compiler.util;
@@ -173,6 +170,14 @@ public class ErrorMessages extends ListResourceBundle {
         "Invalid URI ''{0}''."},
 
         /*
+         * Note to translators:  This message is displayed when the URI
+         * mentioned in the substitution text is not well-formed syntactically.
+         */
+        {ErrorMsg.CATALOG_EXCEPTION,
+        "JAXP08090001: The CatalogResolver is enabled with the catalog \"{0}\", "
+              + "but a CatalogException is returned."},
+
+        /*
          * Note to translators:  The file or URI named in the substitution text
          * exists but could not be opened.
          */
@@ -267,6 +272,14 @@ public class ErrorMessages extends ListResourceBundle {
          */
         {ErrorMsg.CIRCULAR_INCLUDE_ERR,
         "Circular import/include. Stylesheet ''{0}'' already loaded."},
+
+        /*
+         * Note to translators:  "xsl:import" and "xsl:include" are keywords that
+         * should not be translated.
+         */
+        {ErrorMsg.IMPORT_PRECEDE_OTHERS_ERR,
+        "The xsl:import element children must precede all other element children of "
+              + "an xsl:stylesheet element, including any xsl:include element children."},
 
         /*
          * Note to translators:  A result-tree fragment is a portion of a

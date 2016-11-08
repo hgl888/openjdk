@@ -1,5 +1,5 @@
 #
-# Copyright (c) 1995, 2015, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 1995, 2016, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -185,6 +185,9 @@ BUNDLE_UP_AND_EXIT = \
 ( \
   jtregExitCode=$$? && \
   _summary="$(SUMMARY_TXT)"; \
+  if [ $${jtregExitCode} = 1 ] ; then \
+    jtregExitCode=0; \
+  fi; \
   $(RM) -f $(STATS_TXT) $(RUNLIST) $(PASSLIST) $(FAILLIST) $(EXITCODE); \
   $(ECHO) "$${jtregExitCode}" > $(EXITCODE); \
   if [ -r "$${_summary}" ] ; then \
@@ -316,8 +319,9 @@ JTREG_BASIC_OPTIONS += -a
 # Always turn on assertions
 JTREG_ASSERT_OPTION = -ea -esa
 JTREG_BASIC_OPTIONS += $(JTREG_ASSERT_OPTION)
-# Report details on all failed or error tests, times too
-JTREG_BASIC_OPTIONS += -v:fail,error,time
+# jtreg verbosity setting
+JTREG_VERBOSE ?= fail,error,time
+JTREG_BASIC_OPTIONS += $(if $(JTREG_VERBOSE),-v:$(JTREG_VERBOSE))
 # Retain all files for failing tests
 JTREG_BASIC_OPTIONS += -retain:fail,error
 # Ignore tests are not run and completely silent about it

@@ -25,8 +25,6 @@
 
 package jdk.tools.jmod;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -34,6 +32,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.io.PrintWriter;
 import java.io.UncheckedIOException;
 import java.lang.module.Configuration;
 import java.lang.module.ModuleReader;
@@ -60,7 +59,6 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.text.MessageFormat;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -80,15 +78,16 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.jar.JarOutputStream;
 import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
-import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
 
+import jdk.internal.jmod.JmodFile;
+import jdk.internal.jmod.JmodFile.Section;
 import jdk.internal.joptsimple.BuiltinHelpFormatter;
 import jdk.internal.joptsimple.NonOptionArgumentSpec;
 import jdk.internal.joptsimple.OptionDescriptor;
@@ -103,6 +102,7 @@ import jdk.internal.module.ConfigurableModuleFinder;
 import jdk.internal.module.ConfigurableModuleFinder.Phase;
 import jdk.internal.module.ModuleHashes;
 import jdk.internal.module.ModuleInfoExtender;
+import jdk.tools.jlink.internal.Utils;
 
 import static java.util.stream.Collectors.joining;
 
@@ -137,8 +137,8 @@ public class JmodTask {
     private static final String MODULE_INFO = "module-info.class";
 
     private Options options;
-    private PrintStream out = System.out;
-    void setLog(PrintStream out) {
+    private PrintWriter out = new PrintWriter(System.out, true);
+    void setLog(PrintWriter out, PrintWriter err) {
         this.out = out;
     }
 
@@ -165,6 +165,8 @@ public class JmodTask {
         List<Path> cmds;
         List<Path> configs;
         List<Path> libs;
+        List<Path> headerFiles;
+        List<Path> manPages;
         ModuleFinder moduleFinder;
         Version moduleVersion;
         String mainClass;
@@ -249,23 +251,14 @@ public class JmodTask {
     }
 
     private boolean describe() throws IOException {
-        ZipFile zip = null;
-        try {
-            try {
-                zip = new ZipFile(options.jmodFile.toFile());
-            } catch (IOException x) {
-                throw new IOException("error opening jmod file", x);
+        try (JmodFile jf = new JmodFile(options.jmodFile)) {
+            try (InputStream in = jf.getInputStream(Section.CLASSES, MODULE_INFO)) {
+                ModuleDescriptor md = ModuleDescriptor.read(in);
+                printModuleDescriptor(md);
+                return true;
+            } catch (IOException e) {
+                throw new CommandException("err.module.descriptor.not.found");
             }
-
-            try (InputStream in = Files.newInputStream(options.jmodFile)) {
-                boolean found = printModuleDescriptor(in);
-                if (!found)
-                    throw new CommandException("err.module.descriptor.not.found");
-                return found;
-            }
-        } finally {
-            if (zip != null)
-                zip.close();
         }
     }
 
@@ -277,65 +270,52 @@ public class JmodTask {
 
     private static final JavaLangModuleAccess JLMA = SharedSecrets.getJavaLangModuleAccess();
 
-    private boolean printModuleDescriptor(InputStream in)
+    private void printModuleDescriptor(ModuleDescriptor md)
         throws IOException
     {
-        final String mi = Section.CLASSES.jmodDir() + "/" + MODULE_INFO;
-        try (BufferedInputStream bis = new BufferedInputStream(in);
-             ZipInputStream zis = new ZipInputStream(bis)) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n").append(md.toNameAndVersion());
 
-            ZipEntry e;
-            while ((e = zis.getNextEntry()) != null) {
-                if (e.getName().equals(mi)) {
-                    ModuleDescriptor md = ModuleDescriptor.read(zis);
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("\n").append(md.toNameAndVersion());
+        md.requires().stream()
+            .sorted(Comparator.comparing(Requires::name))
+            .forEach(r -> {
+                sb.append("\n  requires ");
+                if (!r.modifiers().isEmpty())
+                    sb.append(toString(r.modifiers())).append(" ");
+                sb.append(r.name());
+            });
 
-                    md.requires().stream()
-                        .sorted(Comparator.comparing(Requires::name))
-                        .forEach(r -> {
-                            sb.append("\n  requires ");
-                            if (!r.modifiers().isEmpty())
-                                sb.append(toString(r.modifiers())).append(" ");
-                            sb.append(r.name());
-                        });
+        md.uses().stream().sorted()
+            .forEach(s -> sb.append("\n  uses ").append(s));
 
-                    md.uses().stream().sorted()
-                        .forEach(s -> sb.append("\n  uses ").append(s));
+        md.exports().stream()
+            .sorted(Comparator.comparing(Exports::source))
+            .forEach(p -> sb.append("\n  exports ").append(p));
 
-                    md.exports().stream()
-                        .sorted(Comparator.comparing(Exports::source))
-                        .forEach(p -> sb.append("\n  exports ").append(p));
+        md.conceals().stream().sorted()
+            .forEach(p -> sb.append("\n  conceals ").append(p));
 
-                    md.conceals().stream().sorted()
-                        .forEach(p -> sb.append("\n  conceals ").append(p));
+        md.provides().values().stream()
+            .sorted(Comparator.comparing(Provides::service))
+            .forEach(p -> sb.append("\n  provides ").append(p.service())
+                .append(" with ")
+                .append(toString(p.providers())));
 
-                    md.provides().values().stream()
-                        .sorted(Comparator.comparing(Provides::service))
-                        .forEach(p -> sb.append("\n  provides ").append(p.service())
-                                        .append(" with ")
-                                        .append(toString(p.providers())));
+        md.mainClass().ifPresent(v -> sb.append("\n  main-class " + v));
 
-                    md.mainClass().ifPresent(v -> sb.append("\n  main-class " + v));
+        md.osName().ifPresent(v -> sb.append("\n  operating-system-name " + v));
 
-                    md.osName().ifPresent(v -> sb.append("\n  operating-system-name " + v));
+        md.osArch().ifPresent(v -> sb.append("\n  operating-system-architecture " + v));
 
-                    md.osArch().ifPresent(v -> sb.append("\n  operating-system-architecture " + v));
+        md.osVersion().ifPresent(v -> sb.append("\n  operating-system-version " + v));
 
-                    md.osVersion().ifPresent(v -> sb.append("\n  operating-system-version " + v));
+        JLMA.hashes(md).ifPresent(
+            hashes -> hashes.names().stream().sorted().forEach(
+                mod -> sb.append("\n  hashes ").append(mod).append(" ")
+                    .append(hashes.algorithm()).append(" ")
+                    .append(hashes.hashFor(mod))));
 
-                    JLMA.hashes(md).ifPresent(
-                            hashes -> hashes.names().stream().sorted().forEach(
-                                    mod -> sb.append("\n  hashes ").append(mod).append(" ")
-                                             .append(hashes.algorithm()).append(" ")
-                                             .append(hashes.hashFor(mod))));
-
-                    out.println(sb.toString());
-                    return true;
-                }
-            }
-        }
-        return false;
+        out.println(sb.toString());
     }
 
     private boolean create() throws IOException {
@@ -346,9 +326,8 @@ public class JmodTask {
         Path target = options.jmodFile;
         Path tempTarget = target.resolveSibling(target.getFileName() + ".tmp");
         try {
-            try (OutputStream out = Files.newOutputStream(tempTarget);
-                 BufferedOutputStream bos = new BufferedOutputStream(out)) {
-                jmod.write(bos);
+            try (JmodOutputStream jos = JmodOutputStream.newOutputStream(tempTarget)) {
+                jmod.write(jos);
             }
             Files.move(tempTarget, target);
         } catch (Exception e) {
@@ -369,6 +348,9 @@ public class JmodTask {
         final List<Path> libs = options.libs;
         final List<Path> configs = options.configs;
         final List<Path> classpath = options.classpath;
+        final List<Path> headerFiles = options.headerFiles;
+        final List<Path> manPages = options.manPages;
+
         final Version moduleVersion = options.moduleVersion;
         final String mainClass = options.mainClass;
         final String osName = options.osName;
@@ -382,19 +364,19 @@ public class JmodTask {
         /**
          * Writes the jmod to the given output stream.
          */
-        void write(OutputStream out) throws IOException {
-            try (ZipOutputStream zos = new ZipOutputStream(out)) {
+        void write(JmodOutputStream out) throws IOException {
+            // module-info.class
+            writeModuleInfo(out, findPackages(classpath));
 
-                // module-info.class
-                writeModuleInfo(zos, findPackages(classpath));
+            // classes
+            processClasses(out, classpath);
 
-                // classes
-                processClasses(zos, classpath);
+            processSection(out, Section.NATIVE_CMDS, cmds);
+            processSection(out, Section.NATIVE_LIBS, libs);
+            processSection(out, Section.CONFIG, configs);
+            processSection(out, Section.HEADER_FILES, headerFiles);
+            processSection(out, Section.MAN_PAGES, manPages);
 
-                processSection(zos, Section.NATIVE_CMDS, cmds);
-                processSection(zos, Section.NATIVE_LIBS, libs);
-                processSection(zos, Section.CONFIG, configs);
-            }
         }
 
         /**
@@ -440,7 +422,7 @@ public class JmodTask {
          * then the corresponding class file attributes are added to the
          * module-info here.
          */
-        void writeModuleInfo(ZipOutputStream zos, Set<String> packages)
+        void writeModuleInfo(JmodOutputStream out, Set<String> packages)
             throws IOException
         {
             Supplier<InputStream> miSupplier = newModuleInfoSupplier();
@@ -491,11 +473,7 @@ public class JmodTask {
                 }
 
                 // write the (possibly extended or modified) module-info.class
-                String e = Section.CLASSES.jmodDir() + "/" + MODULE_INFO;
-                ZipEntry ze = new ZipEntry(e);
-                zos.putNextEntry(ze);
-                extender.write(zos);
-                zos.closeEntry();
+                out.writeEntry(extender.toByteArray(), Section.CLASSES, MODULE_INFO);
             }
         }
 
@@ -626,7 +604,7 @@ public class JmodTask {
                 return "";
         }
 
-        void processClasses(ZipOutputStream zos, List<Path> classpaths)
+        void processClasses(JmodOutputStream out, List<Path> classpaths)
             throws IOException
         {
             if (classpaths == null)
@@ -634,41 +612,49 @@ public class JmodTask {
 
             for (Path p : classpaths) {
                 if (Files.isDirectory(p)) {
-                    processSection(zos, Section.CLASSES, p);
+                    processSection(out, Section.CLASSES, p);
                 } else if (Files.isRegularFile(p) && p.toString().endsWith(".jar")) {
                     try (JarFile jf = new JarFile(p.toFile())) {
-                        JarEntryConsumer jec = new JarEntryConsumer(zos, jf);
+                        JarEntryConsumer jec = new JarEntryConsumer(out, jf);
                         jf.stream().filter(jec).forEach(jec);
                     }
                 }
             }
         }
 
-        void processSection(ZipOutputStream zos, Section section, List<Path> paths)
+        void processSection(JmodOutputStream out, Section section, List<Path> paths)
             throws IOException
         {
             if (paths == null)
                 return;
 
             for (Path p : paths)
-                processSection(zos, section, p);
+                processSection(out, section, p);
         }
 
-        void processSection(ZipOutputStream zos, Section section, Path top)
+        void processSection(JmodOutputStream out, Section section, Path top)
             throws IOException
         {
-            final String prefix = section.jmodDir();
-
             Files.walkFileTree(top, new SimpleFileVisitor<Path>() {
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
                     throws IOException
                 {
                     Path relPath = top.relativize(file);
+                    if (relPath.toString().equals(MODULE_INFO)
+                        && !Section.CLASSES.equals(section))
+                        warning("warn.ignore.entry", MODULE_INFO, section);
+
                     if (!relPath.toString().equals(MODULE_INFO)
-                            && !matches(relPath, excludes)) {
+                        && !matches(relPath, excludes)) {
                         try (InputStream in = Files.newInputStream(file)) {
-                            writeZipEntry(zos, in, prefix, relPath.toString());
+                            out.writeEntry(in, section, relPath.toString());
+                        } catch (IOException x) {
+                            if (x.getMessage().contains("duplicate entry")) {
+                                warning("warn.ignore.duplicate.entry", relPath.toString(), section);
+                                return FileVisitResult.CONTINUE;
+                            }
+                            throw x;
                         }
                     }
                     return FileVisitResult.CONTINUE;
@@ -686,28 +672,17 @@ public class JmodTask {
             return false;
         }
 
-        void writeZipEntry(ZipOutputStream zos, InputStream in, String prefix, String other)
-            throws IOException
-        {
-            String name = Paths.get(prefix, other).toString()
-                               .replace(File.separatorChar, '/');
-            ZipEntry ze = new ZipEntry(name);
-            zos.putNextEntry(ze);
-            in.transferTo(zos);
-            zos.closeEntry();
-        }
-
         class JarEntryConsumer implements Consumer<JarEntry>, Predicate<JarEntry> {
-            final ZipOutputStream zos;
+            final JmodOutputStream out;
             final JarFile jarfile;
-            JarEntryConsumer(ZipOutputStream zos, JarFile jarfile) {
-                this.zos = zos;
+            JarEntryConsumer(JmodOutputStream out, JarFile jarfile) {
+                this.out = out;
                 this.jarfile = jarfile;
             }
             @Override
             public void accept(JarEntry je) {
                 try (InputStream in = jarfile.getInputStream(je)) {
-                    writeZipEntry(zos, in, Section.CLASSES.jmodDir(), je.getName());
+                    out.writeEntry(in, Section.CLASSES, je.getName());
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
@@ -934,29 +909,11 @@ public class JmodTask {
         {
             Path target = moduleNameToPath.get(name);
             Path tempTarget = target.resolveSibling(target.getFileName() + ".tmp");
-            ZipFile zip = new ZipFile(target.toFile());
             try {
-                try (OutputStream out = Files.newOutputStream(tempTarget);
-                     ZipOutputStream zos = new ZipOutputStream(out)) {
-                    zip.stream().forEach(e -> {
-                        try {
-                            InputStream in = zip.getInputStream(e);
-                            if (e.getName().equals(MODULE_INFO) ||
-                                e.getName().equals(Section.CLASSES.jmodDir() + "/" + MODULE_INFO)) {
-                                ZipEntry ze = new ZipEntry(e.getName());
-                                ze.setTime(System.currentTimeMillis());
-                                zos.putNextEntry(ze);
-                                recordHashes(in, zos, moduleHashes);
-                                zos.closeEntry();
-                            } else {
-                                zos.putNextEntry(e);
-                                zos.write(in.readAllBytes());
-                                zos.closeEntry();
-                            }
-                        } catch (IOException x) {
-                            throw new UncheckedIOException(x);
-                        }
-                    });
+                if (target.getFileName().toString().endsWith(".jmod")) {
+                    updateJmodFile(target, tempTarget, moduleHashes);
+                } else {
+                    updateModularJar(target, tempTarget, moduleHashes);
                 }
             } catch (IOException|RuntimeException e) {
                 if (Files.exists(tempTarget)) {
@@ -967,11 +924,65 @@ public class JmodTask {
                     }
                 }
                 throw e;
-            } finally {
-                zip.close();
             }
+
             out.println(getMessage("module.hashes.recorded", name));
             Files.move(tempTarget, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        private void updateModularJar(Path target, Path tempTarget,
+                                      ModuleHashes moduleHashes)
+            throws IOException
+        {
+            try (JarFile jf = new JarFile(target.toFile());
+                 OutputStream out = Files.newOutputStream(tempTarget);
+                 JarOutputStream jos = new JarOutputStream(out))
+            {
+                jf.stream().forEach(e -> {
+                    try (InputStream in = jf.getInputStream(e)) {
+                        if (e.getName().equals(MODULE_INFO)) {
+                            // what about module-info.class in versioned entries?
+                            ZipEntry ze = new ZipEntry(e.getName());
+                            ze.setTime(System.currentTimeMillis());
+                            jos.putNextEntry(ze);
+                            recordHashes(in, jos, moduleHashes);
+                            jos.closeEntry();
+                        } else {
+                            jos.putNextEntry(e);
+                            jos.write(in.readAllBytes());
+                            jos.closeEntry();
+                        }
+                    } catch (IOException x) {
+                        throw new UncheckedIOException(x);
+                    }
+                });
+            }
+        }
+
+        private void updateJmodFile(Path target, Path tempTarget,
+                                    ModuleHashes moduleHashes)
+            throws IOException
+        {
+
+            try (JmodFile jf = new JmodFile(target);
+                 JmodOutputStream jos = JmodOutputStream.newOutputStream(tempTarget))
+            {
+                jf.stream().forEach(e -> {
+                    try (InputStream in = jf.getInputStream(e.section(), e.name())) {
+                        if (e.name().equals(MODULE_INFO)) {
+                            // replace module-info.class
+                            ModuleInfoExtender extender =
+                                ModuleInfoExtender.newExtender(in);
+                            extender.hashes(moduleHashes);
+                            jos.writeEntry(extender.toByteArray(), e.section(), e.name());
+                        } else {
+                            jos.writeEntry(in, e);
+                        }
+                    } catch (IOException x) {
+                        throw new UncheckedIOException(x);
+                    }
+                });
+            }
         }
 
         private Path moduleToPath(String name) {
@@ -986,22 +997,6 @@ public class JmodTask {
             }
             return path;
         }
-    }
-
-    enum Section {
-        NATIVE_LIBS("native"),
-        NATIVE_CMDS("bin"),
-        CLASSES("classes"),
-        CONFIG("conf"),
-        UNKNOWN("unknown");
-
-        private final String jmodDir;
-
-        Section(String jmodDir) {
-            this.jmodDir = jmodDir;
-        }
-
-        String jmodDir() { return jmodDir; }
     }
 
     static class ClassPathConverter implements ValueConverter<Path> {
@@ -1072,6 +1067,10 @@ public class JmodTask {
         @Override
         public Pattern convert(String value) {
             try {
+                if (value.startsWith("regex:")) {
+                    value = value.substring("regex:".length()).trim();
+                }
+
                 return Pattern.compile(value);
             } catch (PatternSyntaxException e) {
                 throw new CommandException("err.bad.pattern", value);
@@ -1080,15 +1079,14 @@ public class JmodTask {
 
         @Override public Class<Pattern> valueType() { return Pattern.class; }
 
-        @Override public String valuePattern() { return "pattern"; }
+        @Override public String valuePattern() { return "regex-pattern"; }
     }
 
-    static class GlobConverter implements ValueConverter<PathMatcher> {
+    static class PathMatcherConverter implements ValueConverter<PathMatcher> {
         @Override
         public PathMatcher convert(String pattern) {
             try {
-                return FileSystems.getDefault()
-                                  .getPathMatcher("glob:" + pattern);
+                return Utils.getPathMatcher(FileSystems.getDefault(), pattern);
             } catch (PatternSyntaxException e) {
                 throw new CommandException("err.bad.pattern", pattern);
             }
@@ -1096,7 +1094,7 @@ public class JmodTask {
 
         @Override public Class<PathMatcher> valueType() { return PathMatcher.class; }
 
-        @Override public String valuePattern() { return "pattern"; }
+        @Override public String valuePattern() { return "pattern-list"; }
     }
 
     /* Support for @<file> in jmod help */
@@ -1141,7 +1139,7 @@ public class JmodTask {
             String content = super.format(all);
             StringBuilder builder = new StringBuilder();
 
-            builder.append("\n").append(" Main operation modes:\n  ");
+            builder.append(getMessage("main.opt.mode")).append("\n  ");
             builder.append(getMessage("main.opt.mode.create")).append("\n  ");
             builder.append(getMessage("main.opt.mode.list")).append("\n  ");
             builder.append(getMessage("main.opt.mode.describe")).append("\n  ");
@@ -1165,7 +1163,7 @@ public class JmodTask {
         }
     }
 
-    private final OptionParser parser = new OptionParser();
+    private final OptionParser parser = new OptionParser("hp");
 
     private void handleOptions(String[] args) {
         parser.formatHelpWith(new JmodHelpFormatter());
@@ -1194,7 +1192,7 @@ public class JmodTask {
         OptionSpec<PathMatcher> excludes
                 = parser.accepts("exclude", getMessage("main.opt.exclude"))
                         .withRequiredArg()
-                        .withValuesConvertedBy(new GlobConverter());
+                        .withValuesConvertedBy(new PathMatcherConverter());
 
         OptionSpec<Pattern> hashModules
                 = parser.accepts("hash-modules", getMessage("main.opt.hash-modules"))
@@ -1202,8 +1200,14 @@ public class JmodTask {
                         .withValuesConvertedBy(new PatternConverter());
 
         OptionSpec<Void> help
-                = parser.accepts("help", getMessage("main.opt.help"))
+                = parser.acceptsAll(Set.of("h", "help"), getMessage("main.opt.help"))
                         .forHelp();
+
+        OptionSpec<Path> headerFiles
+            = parser.accepts("header-files", getMessage("main.opt.header-files"))
+                    .withRequiredArg()
+                    .withValuesSeparatedBy(File.pathSeparatorChar)
+                    .withValuesConvertedBy(DirPathConverter.INSTANCE);
 
         OptionSpec<Path> libs
                 = parser.accepts("libs", getMessage("main.opt.libs"))
@@ -1216,9 +1220,15 @@ public class JmodTask {
                         .withRequiredArg()
                         .describedAs(getMessage("main.opt.main-class.arg"));
 
-        OptionSpec<Path> modulePath  // TODO: short version of --mp ??
-                = parser.acceptsAll(Arrays.asList("mp", "modulepath"),
-                                    getMessage("main.opt.modulepath"))
+        OptionSpec<Path> manPages
+            = parser.accepts("man-pages", getMessage("main.opt.man-pages"))
+                        .withRequiredArg()
+                        .withValuesSeparatedBy(File.pathSeparatorChar)
+                        .withValuesConvertedBy(DirPathConverter.INSTANCE);
+
+        OptionSpec<Path> modulePath
+                = parser.acceptsAll(Set.of("p", "module-path"),
+                                    getMessage("main.opt.module-path"))
                         .withRequiredArg()
                         .withValuesSeparatedBy(File.pathSeparatorChar)
                         .withValuesConvertedBy(DirPathConverter.INSTANCE);
@@ -1282,6 +1292,10 @@ public class JmodTask {
                 options.excludes = opts.valuesOf(excludes);
             if (opts.has(libs))
                 options.libs = opts.valuesOf(libs);
+            if (opts.has(headerFiles))
+                options.headerFiles = opts.valuesOf(headerFiles);
+            if (opts.has(manPages))
+                options.manPages = opts.valuesOf(manPages);
             if (opts.has(modulePath)) {
                 Path[] dirs = opts.valuesOf(modulePath).toArray(new Path[0]);
                 options.moduleFinder = ModuleFinder.of(dirs);

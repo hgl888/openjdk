@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,8 +24,10 @@
 /*
  * @test
  * @bug 8136421
- * @requires (os.simpleArch == "x64" | os.simpleArch == "sparcv9" | os.simpleArch == "aarch64")
- * @library / /testlibrary /test/lib
+ * @requires (vm.simpleArch == "x64" | vm.simpleArch == "sparcv9" | vm.simpleArch == "aarch64")
+ *         & (vm.compMode != "Xcomp" | vm.opt.TieredCompilation == null | vm.opt.TieredCompilation == true)
+ * @summary no "-Xcomp -XX:-TieredCompilation" combination allowed until JDK-8140018 is resolved
+ * @library / /test/lib
  * @library ../common/patches
  * @modules java.base/jdk.internal.misc
  * @modules java.base/jdk.internal.org.objectweb.asm
@@ -33,25 +35,23 @@
  *          jdk.vm.ci/jdk.vm.ci.hotspot
  *          jdk.vm.ci/jdk.vm.ci.code
  *          jdk.vm.ci/jdk.vm.ci.meta
- * @ignore 8139703
- * @build jdk.vm.ci/jdk.vm.ci.hotspot.CompilerToVMHelper
- * @build compiler.jvmci.compilerToVM.MaterializeVirtualObjectTest
- * @build sun.hotspot.WhiteBox
- * @run main ClassFileInstaller sun.hotspot.WhiteBox
- *                              sun.hotspot.WhiteBox$WhiteBoxPermission
- * @run main/othervm -Xbootclasspath/a:.
+ *
+ * @build jdk.vm.ci/jdk.vm.ci.hotspot.CompilerToVMHelper sun.hotspot.WhiteBox
+ * @run driver ClassFileInstaller sun.hotspot.WhiteBox
+ *                                sun.hotspot.WhiteBox$WhiteBoxPermission
+ * @run main/othervm -Xmixed -Xbootclasspath/a:.
  *                   -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI
  *                   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI
  *                   -XX:CompileCommand=exclude,*::check
- *                   -XX:+DoEscapeAnalysis
+ *                   -XX:+DoEscapeAnalysis -XX:-UseCounterDecay
  *                   -Xbatch
  *                   -Dcompiler.jvmci.compilerToVM.MaterializeVirtualObjectTest.invalidate=false
  *                   compiler.jvmci.compilerToVM.MaterializeVirtualObjectTest
- * @run main/othervm -Xbootclasspath/a:.
+ * @run main/othervm -Xmixed -Xbootclasspath/a:.
  *                   -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI
  *                   -XX:+UnlockExperimentalVMOptions -XX:+EnableJVMCI
  *                   -XX:CompileCommand=exclude,*::check
- *                   -XX:+DoEscapeAnalysis
+ *                   -XX:+DoEscapeAnalysis -XX:-UseCounterDecay
  *                   -Xbatch
  *                   -Dcompiler.jvmci.compilerToVM.MaterializeVirtualObjectTest.invalidate=true
  *                   compiler.jvmci.compilerToVM.MaterializeVirtualObjectTest
@@ -59,32 +59,38 @@
 
 package compiler.jvmci.compilerToVM;
 
-import java.lang.reflect.Method;
-import jdk.vm.ci.hotspot.HotSpotStackFrameReference;
-import jdk.vm.ci.meta.ResolvedJavaMethod;
-import jdk.vm.ci.hotspot.CompilerToVMHelper;
-import jdk.test.lib.Asserts;
-
 import compiler.jvmci.common.CTVMUtilities;
 import compiler.testlibrary.CompilerUtils;
-
+import compiler.whitebox.CompilerWhiteBoxTest;
+import jdk.test.lib.Asserts;
+import jdk.vm.ci.hotspot.CompilerToVMHelper;
+import jdk.vm.ci.hotspot.HotSpotStackFrameReference;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
 import sun.hotspot.WhiteBox;
 
+import java.lang.reflect.Method;
+
 public class MaterializeVirtualObjectTest {
-    private static final WhiteBox WB = WhiteBox.getWhiteBox();
+    private static final WhiteBox WB;
     private static final Method METHOD;
     private static final ResolvedJavaMethod RESOLVED_METHOD;
-    private static final boolean INVALIDATE = Boolean.getBoolean(
-            "compiler.jvmci.compilerToVM.MaterializeVirtualObjectTest.invalidate");
+    private static final boolean INVALIDATE;
+    private static final int COMPILE_THRESHOLD;
 
     static {
+        WB = WhiteBox.getWhiteBox();
         try {
             METHOD = MaterializeVirtualObjectTest.class.getDeclaredMethod(
-                    "testFrame", String.class, boolean.class);
+                    "testFrame", String.class, int.class);
         } catch (NoSuchMethodException e) {
             throw new Error("Can't get executable for test method", e);
         }
         RESOLVED_METHOD = CTVMUtilities.getResolvedMethod(METHOD);
+        INVALIDATE = Boolean.getBoolean(
+                "compiler.jvmci.compilerToVM.MaterializeVirtualObjectTest.invalidate");
+        COMPILE_THRESHOLD = WB.getBooleanVMFlag("TieredCompilation")
+                ? CompilerWhiteBoxTest.THRESHOLD
+                : CompilerWhiteBoxTest.THRESHOLD * 2;
     }
 
     public static void main(String[] args) {
@@ -106,26 +112,26 @@ public class MaterializeVirtualObjectTest {
         System.out.println(getName());
         Asserts.assertFalse(WB.isMethodCompiled(METHOD), getName()
                 + " : method unexpectedly compiled");
-        /* need to call testFrame at least once to be able to compile it, so
-           calling with materialize=false, because testFrame is not compiled */
-        testFrame("someString", /* materialize= */ false);
-        WB.enqueueMethodForCompilation(METHOD, 4);
+        /* need to trigger compilation by multiple method invocations
+           in order to have method profile data to be gathered */
+        for (int i = 0; i < COMPILE_THRESHOLD; i++) {
+            testFrame("someString", i);
+        }
         Asserts.assertTrue(WB.isMethodCompiled(METHOD), getName()
                 + "Method unexpectedly not compiled");
-        // calling with materialize=true to materialize compiled testFrame
-        testFrame("someString", /* materialize= */ true);
+        testFrame("someString", COMPILE_THRESHOLD);
     }
 
-    private void testFrame(String str, boolean materialize) {
+    private void testFrame(String str, int iteration) {
         Helper helper = new Helper(str);
-        check(materialize);
+        check(iteration);
         Asserts.assertTrue((helper.string != null) && (this != null)
                 && (helper != null), getName() + " : some locals are null");
     }
 
-    private void check(boolean materialize) {
+    private void check(int iteration) {
         // Materialize virtual objects on last invocation
-        if (materialize) {
+        if (iteration == COMPILE_THRESHOLD) {
             HotSpotStackFrameReference hsFrame = CompilerToVMHelper
                     .getNextStackFrame(/* topmost frame */ null,
                             new ResolvedJavaMethod[]{

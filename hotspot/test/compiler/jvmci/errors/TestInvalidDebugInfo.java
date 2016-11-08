@@ -23,7 +23,7 @@
 
 /**
  * @test
- * @requires (os.simpleArch == "x64" | os.simpleArch == "sparcv9" | os.simpleArch == "aarch64")
+ * @requires (vm.simpleArch == "x64" | vm.simpleArch == "sparcv9" | vm.simpleArch == "aarch64")
  * @modules jdk.vm.ci/jdk.vm.ci.hotspot
  *          jdk.vm.ci/jdk.vm.ci.code
  *          jdk.vm.ci/jdk.vm.ci.code.site
@@ -36,6 +36,7 @@
 
 package compiler.jvmci.errors;
 
+import jdk.vm.ci.code.Architecture;
 import jdk.vm.ci.code.BytecodeFrame;
 import jdk.vm.ci.code.DebugInfo;
 import jdk.vm.ci.code.Location;
@@ -53,10 +54,10 @@ import jdk.vm.ci.meta.Assumptions.Assumption;
 import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.JavaValue;
-import jdk.vm.ci.meta.LIRKind;
+import jdk.vm.ci.meta.PlatformKind;
 import jdk.vm.ci.meta.ResolvedJavaType;
 import jdk.vm.ci.meta.Value;
-
+import jdk.vm.ci.meta.ValueKind;
 import org.junit.Test;
 
 /**
@@ -65,6 +66,22 @@ import org.junit.Test;
 public class TestInvalidDebugInfo extends CodeInstallerTest {
 
     private static class UnknownJavaValue implements JavaValue {
+    }
+
+    private static class TestValueKind extends ValueKind<TestValueKind> {
+
+        TestValueKind(Architecture arch, JavaKind kind) {
+            this(arch.getPlatformKind(kind));
+        }
+
+        TestValueKind(PlatformKind kind) {
+            super(kind);
+        }
+
+        @Override
+        public TestValueKind changeType(PlatformKind kind) {
+            return new TestValueKind(kind);
+        }
     }
 
     private void test(JavaValue[] values, JavaKind[] slotKinds, int locals, int stack, int locks) {
@@ -146,7 +163,7 @@ public class TestInvalidDebugInfo extends CodeInstallerTest {
 
     @Test(expected = JVMCIError.class)
     public void testUnexpectedTypeOnStack() {
-        LIRKind kind = codeCache.getTarget().getLIRKind(JavaKind.Int);
+        ValueKind<?> kind = new TestValueKind(codeCache.getTarget().arch, JavaKind.Int);
         StackSlot value = StackSlot.get(kind, 8, false);
         test(new JavaValue[]{value}, new JavaKind[]{JavaKind.Illegal}, 1, 0, 0);
     }

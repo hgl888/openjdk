@@ -60,6 +60,10 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
     public static final String PROPERTY_TLS_DISABLED_ALGS =
             "jdk.tls.disabledAlgorithms";
 
+    // the known security property, jdk.jar.disabledAlgorithms
+    public static final String PROPERTY_JAR_DISABLED_ALGS =
+            "jdk.jar.disabledAlgorithms";
+
     private final String[] disabledAlgorithms;
     private final Constraints algorithmConstraints;
 
@@ -73,6 +77,14 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
         this(propertyName, new AlgorithmDecomposer());
     }
 
+    /**
+     * Initialize algorithm constraints with the specified security property
+     * for a specific usage type.
+     *
+     * @param propertyName the security property name that define the disabled
+     *        algorithm constraints
+     * @param decomposer an alternate AlgorithmDecomposer.
+     */
     public DisabledAlgorithmConstraints(String propertyName,
             AlgorithmDecomposer decomposer) {
         super(decomposer);
@@ -530,7 +542,8 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
                 }
                 throw new CertPathValidatorException(
                         "Algorithm constraints check failed on certificate " +
-                                "anchor limits",
+                                "anchor limits. " + algorithm + " used with " +
+                                cp.getCertificate().getSubjectX500Principal(),
                         null, null, -1, BasicReason.ALGORITHM_CONSTRAINED);
             }
         }
@@ -543,7 +556,7 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
      private static class DenyAfterConstraint extends Constraint {
          private Date denyAfterDate;
          private static final SimpleDateFormat dateFormat =
-                 new SimpleDateFormat("EEE, MMM d HH:mm:ss z YYYY");
+                 new SimpleDateFormat("EEE, MMM d HH:mm:ss z yyyy");
 
          DenyAfterConstraint(String algo, int year, int month, int day) {
              Calendar c;
@@ -593,11 +606,17 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
          public void permits(CertConstraintParameters cp)
                  throws CertPathValidatorException {
              Date currentDate;
+             String errmsg;
 
-             if (cp.getPKIXParamDate() != null) {
+             if (cp.getJARTimestamp() != null) {
+                 currentDate = cp.getJARTimestamp().getTimestamp();
+                 errmsg = "JAR Timestamp date: ";
+             } else if (cp.getPKIXParamDate() != null) {
                  currentDate = cp.getPKIXParamDate();
+                 errmsg = "PKIXParameter date: ";
              } else {
                  currentDate = new Date();
+                 errmsg = "Certificate date: ";
              }
 
              if (!denyAfterDate.after(currentDate)) {
@@ -605,12 +624,11 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
                      return;
                  }
                  throw new CertPathValidatorException(
-                         "denyAfter constraint check failed.  " +
-                                 "Constraint date: " +
-                                 dateFormat.format(denyAfterDate) +
-                                 "; Cert date: " +
-                                 dateFormat.format(currentDate),
-                          null, null, -1, BasicReason.ALGORITHM_CONSTRAINED);
+                         "denyAfter constraint check failed: " + algorithm +
+                                 " used with Constraint date: " +
+                                 dateFormat.format(denyAfterDate) + "; "
+                                 + errmsg + dateFormat.format(currentDate),
+                         null, null, -1, BasicReason.ALGORITHM_CONSTRAINED);
              }
          }
 
@@ -639,6 +657,7 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
         private int minSize;            // the minimal available key size
         private int maxSize;            // the maximal available key size
         private int prohibitedSize = -1;    // unavailable key sizes
+        private int size;
 
         public KeySizeConstraint(String algo, Operator operator, int length) {
             algorithm = algo;
@@ -690,7 +709,9 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
                     return;
                 }
                 throw new CertPathValidatorException(
-                        "Algorithm constraints check failed on keysize limits",
+                        "Algorithm constraints check failed on keysize limits. "
+                                + algorithm + " " + size + "bit key used with "
+                                + cp.getCertificate().getSubjectX500Principal(),
                         null, null, -1, BasicReason.ALGORITHM_CONSTRAINED);
             }
         }
@@ -717,7 +738,7 @@ public class DisabledAlgorithmConstraints extends AbstractAlgorithmConstraints {
                 return true;
             }
 
-            int size = KeyUtil.getKeySize(key);
+            size = KeyUtil.getKeySize(key);
             if (size == 0) {
                 return false;    // we don't allow any key of size 0.
             } else if (size > 0) {

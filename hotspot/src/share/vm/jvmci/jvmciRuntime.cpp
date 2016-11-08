@@ -44,6 +44,7 @@
 #include "runtime/sharedRuntime.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/defaultStream.hpp"
+#include "utilities/macros.hpp"
 
 #if defined(_MSC_VER)
 #define strtoll _strtoi64
@@ -54,6 +55,7 @@ bool JVMCIRuntime::_HotSpotJVMCIRuntime_initialized = false;
 bool JVMCIRuntime::_well_known_classes_initialized = false;
 int JVMCIRuntime::_trivial_prefixes_count = 0;
 char** JVMCIRuntime::_trivial_prefixes = NULL;
+JVMCIRuntime::CompLevelAdjustment JVMCIRuntime::_comp_level_adjustment = JVMCIRuntime::none;
 bool JVMCIRuntime::_shutdown_called = false;
 
 BasicType JVMCIRuntime::kindToBasicType(Handle kind, TRAPS) {
@@ -62,15 +64,15 @@ BasicType JVMCIRuntime::kindToBasicType(Handle kind, TRAPS) {
   }
   jchar ch = JavaKind::typeChar(kind);
   switch(ch) {
-    case 'z': return T_BOOLEAN;
-    case 'b': return T_BYTE;
-    case 's': return T_SHORT;
-    case 'c': return T_CHAR;
-    case 'i': return T_INT;
-    case 'f': return T_FLOAT;
-    case 'j': return T_LONG;
-    case 'd': return T_DOUBLE;
-    case 'a': return T_OBJECT;
+    case 'Z': return T_BOOLEAN;
+    case 'B': return T_BYTE;
+    case 'S': return T_SHORT;
+    case 'C': return T_CHAR;
+    case 'I': return T_INT;
+    case 'F': return T_FLOAT;
+    case 'J': return T_LONG;
+    case 'D': return T_DOUBLE;
+    case 'A': return T_OBJECT;
     case '-': return T_ILLEGAL;
     default:
       JVMCI_ERROR_(T_ILLEGAL, "unexpected Kind: %c", ch);
@@ -311,13 +313,18 @@ JRT_ENTRY_NO_ASYNC(static address, exception_handler_for_pc_helper(JavaThread* t
     // normal bytecode execution.
     thread->clear_exception_oop_and_pc();
 
-    continuation = SharedRuntime::compute_compiled_exc_handler(cm, pc, exception, false, false);
+    bool recursive_exception = false;
+    continuation = SharedRuntime::compute_compiled_exc_handler(cm, pc, exception, false, false, recursive_exception);
     // If an exception was thrown during exception dispatch, the exception oop may have changed
     thread->set_exception_oop(exception());
     thread->set_exception_pc(pc);
 
     // the exception cache is used only by non-implicit exceptions
-    if (continuation != NULL && !SharedRuntime::deopt_blob()->contains(continuation)) {
+    // Update the exception cache only when there didn't happen
+    // another exception during the computation of the compiled
+    // exception handler. Checking for exception oop equality is not
+    // sufficient because some exceptions are pre-allocated and reused.
+    if (continuation != NULL && !recursive_exception && !SharedRuntime::deopt_blob()->contains(continuation)) {
       cm->add_handler_for_exception_and_pc(exception, pc, continuation);
     }
   }
@@ -573,14 +580,14 @@ JRT_LEAF(void, JVMCIRuntime::log_primitive(JavaThread* thread, jchar typeChar, j
   } uu;
   uu.l = value;
   switch (typeChar) {
-    case 'z': tty->print(value == 0 ? "false" : "true"); break;
-    case 'b': tty->print("%d", (jbyte) value); break;
-    case 'c': tty->print("%c", (jchar) value); break;
-    case 's': tty->print("%d", (jshort) value); break;
-    case 'i': tty->print("%d", (jint) value); break;
-    case 'f': tty->print("%f", uu.f); break;
-    case 'j': tty->print(JLONG_FORMAT, value); break;
-    case 'd': tty->print("%lf", uu.d); break;
+    case 'Z': tty->print(value == 0 ? "false" : "true"); break;
+    case 'B': tty->print("%d", (jbyte) value); break;
+    case 'C': tty->print("%c", (jchar) value); break;
+    case 'S': tty->print("%d", (jshort) value); break;
+    case 'I': tty->print("%d", (jint) value); break;
+    case 'F': tty->print("%f", uu.f); break;
+    case 'J': tty->print(JLONG_FORMAT, value); break;
+    case 'D': tty->print("%lf", uu.d); break;
     default: assert(false, "unknown typeChar"); break;
   }
   if (newline) {
@@ -610,6 +617,17 @@ JRT_ENTRY(jint, JVMCIRuntime::test_deoptimize_call_int(JavaThread* thread, int v
   deopt_caller();
   return value;
 JRT_END
+
+void JVMCIRuntime::force_initialization(TRAPS) {
+  JVMCIRuntime::initialize_well_known_classes(CHECK);
+
+  ResourceMark rm;
+  TempNewSymbol getCompiler = SymbolTable::new_symbol("getCompiler", CHECK);
+  TempNewSymbol sig = SymbolTable::new_symbol("()Ljdk/vm/ci/runtime/JVMCICompiler;", CHECK);
+  Handle jvmciRuntime = JVMCIRuntime::get_HotSpotJVMCIRuntime(CHECK);
+  JavaValue result(T_OBJECT);
+  JavaCalls::call_virtual(&result, jvmciRuntime, HotSpotJVMCIRuntime::klass(), getCompiler, sig, CHECK);
+}
 
 // private static JVMCIRuntime JVMCI.initializeRuntime()
 JVM_ENTRY(jobject, JVM_GetJVMCIRuntime(JNIEnv *env, jclass c))
@@ -666,6 +684,11 @@ void JVMCIRuntime::initialize_HotSpotJVMCIRuntime(TRAPS) {
       _trivial_prefixes = prefixes;
       _trivial_prefixes_count = trivial_prefixes->length();
     }
+    int adjustment = HotSpotJVMCIRuntime::compilationLevelAdjustment(result);
+    assert(adjustment >= JVMCIRuntime::none &&
+           adjustment <= JVMCIRuntime::by_full_signature,
+           "compilation level adjustment out of bounds");
+    _comp_level_adjustment = (CompLevelAdjustment) adjustment;
     _HotSpotJVMCIRuntime_initialized = true;
     _HotSpotJVMCIRuntime_instance = JNIHandles::make_global(result());
   }
@@ -680,8 +703,21 @@ void JVMCIRuntime::initialize_JVMCI(TRAPS) {
   assert(_HotSpotJVMCIRuntime_initialized == true, "what?");
 }
 
+bool JVMCIRuntime::can_initialize_JVMCI() {
+  // Initializing JVMCI requires the module system to be initialized past phase 3.
+  // The JVMCI API itself isn't available until phase 2 and ServiceLoader (which
+  // JVMCI initialization requires) isn't usable until after phase 3. Testing
+  // whether the system loader is initialized satisfies all these invariants.
+  if (SystemDictionary::java_system_loader() == NULL) {
+    return false;
+  }
+  assert(Universe::is_module_initialized(), "must be");
+  return true;
+}
+
 void JVMCIRuntime::initialize_well_known_classes(TRAPS) {
   if (JVMCIRuntime::_well_known_classes_initialized == false) {
+    guarantee(can_initialize_JVMCI(), "VM is not yet sufficiently booted to initialize JVMCI");
     SystemDictionary::WKID scan = SystemDictionary::FIRST_JVMCI_WKID;
     SystemDictionary::initialize_wk_klasses_through(SystemDictionary::LAST_JVMCI_WKID, scan, CHECK);
     JVMCIJavaClasses::compute_offsets(CHECK);
@@ -764,14 +800,14 @@ JVM_ENTRY(void, JVM_RegisterJVMCINatives(JNIEnv *env, jclass c2vmClass))
   }
 
 #ifdef _LP64
-#ifndef TARGET_ARCH_sparc
+#ifndef SPARC
   uintptr_t heap_end = (uintptr_t) Universe::heap()->reserved_region().end();
   uintptr_t allocation_end = heap_end + ((uintptr_t)16) * 1024 * 1024 * 1024;
   guarantee(heap_end < allocation_end, "heap end too close to end of address space (might lead to erroneous TLAB allocations)");
-#endif // TARGET_ARCH_sparc
+#endif // !SPARC
 #else
   fatal("check TLAB allocation code for address space conflicts");
-#endif
+#endif // _LP64
 
   JVMCIRuntime::initialize_well_known_classes(CHECK);
 
@@ -780,16 +816,6 @@ JVM_ENTRY(void, JVM_RegisterJVMCINatives(JNIEnv *env, jclass c2vmClass))
     env->RegisterNatives(c2vmClass, CompilerToVM::methods, CompilerToVM::methods_count());
   }
 JVM_END
-
-#define CHECK_WARN_ABORT_(message) THREAD); \
-  if (HAS_PENDING_EXCEPTION) { \
-    warning(message); \
-    char buf[512]; \
-    jio_snprintf(buf, 512, "Uncaught exception at %s:%d", __FILE__, __LINE__); \
-    JVMCIRuntime::abort_on_pending_exception(PENDING_EXCEPTION, buf); \
-    return; \
-  } \
-  (void)(0
 
 void JVMCIRuntime::shutdown(TRAPS) {
   if (_HotSpotJVMCIRuntime_instance != NULL) {
@@ -801,6 +827,73 @@ void JVMCIRuntime::shutdown(TRAPS) {
     args.push_oop(receiver);
     JavaCalls::call_special(&result, receiver->klass(), vmSymbols::shutdown_method_name(), vmSymbols::void_method_signature(), &args, CHECK);
   }
+}
+
+CompLevel JVMCIRuntime::adjust_comp_level_inner(methodHandle method, bool is_osr, CompLevel level, JavaThread* thread) {
+  JVMCICompiler* compiler = JVMCICompiler::instance(thread);
+  if (compiler != NULL && compiler->is_bootstrapping()) {
+    return level;
+  }
+  if (!is_HotSpotJVMCIRuntime_initialized() || !_comp_level_adjustment) {
+    // JVMCI cannot participate in compilation scheduling until
+    // JVMCI is initialized and indicates it wants to participate.
+    return level;
+  }
+
+#define CHECK_RETURN THREAD); \
+if (HAS_PENDING_EXCEPTION) { \
+  Handle exception(THREAD, PENDING_EXCEPTION); \
+  CLEAR_PENDING_EXCEPTION; \
+\
+  java_lang_Throwable::java_printStackTrace(exception, THREAD); \
+  if (HAS_PENDING_EXCEPTION) { \
+    CLEAR_PENDING_EXCEPTION; \
+  } \
+  return level; \
+} \
+(void)(0
+
+
+  Thread* THREAD = thread;
+  HandleMark hm;
+  Handle receiver = JVMCIRuntime::get_HotSpotJVMCIRuntime(CHECK_RETURN);
+  Handle name;
+  Handle sig;
+  if (_comp_level_adjustment == JVMCIRuntime::by_full_signature) {
+    name = java_lang_String::create_from_symbol(method->name(), CHECK_RETURN);
+    sig = java_lang_String::create_from_symbol(method->signature(), CHECK_RETURN);
+  } else {
+    name = Handle();
+    sig = Handle();
+  }
+
+  JavaValue result(T_INT);
+  JavaCallArguments args;
+  args.push_oop(receiver);
+  args.push_oop(method->method_holder()->java_mirror());
+  args.push_oop(name());
+  args.push_oop(sig());
+  args.push_int(is_osr);
+  args.push_int(level);
+  JavaCalls::call_special(&result, receiver->klass(), vmSymbols::adjustCompilationLevel_name(),
+                          vmSymbols::adjustCompilationLevel_signature(), &args, CHECK_RETURN);
+
+  int comp_level = result.get_jint();
+  if (comp_level < CompLevel_none || comp_level > CompLevel_full_optimization) {
+    assert(false, "compilation level out of bounds");
+    return level;
+  }
+  return (CompLevel) comp_level;
+#undef CHECK_RETURN
+}
+
+void JVMCIRuntime::bootstrap_finished(TRAPS) {
+  HandleMark hm(THREAD);
+  Handle receiver = get_HotSpotJVMCIRuntime(CHECK);
+  JavaValue result(T_VOID);
+  JavaCallArguments args;
+  args.push_oop(receiver);
+  JavaCalls::call_special(&result, receiver->klass(), vmSymbols::bootstrapFinished_method_name(), vmSymbols::void_method_signature(), &args, CHECK);
 }
 
 bool JVMCIRuntime::treat_as_trivial(Method* method) {
